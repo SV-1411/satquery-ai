@@ -40,7 +40,9 @@ npm run build
 
 ## Current demo
 
-The owner-only demo is deployed at <https://satquery-sentry.shrutikaverma22.chatgpt.site>.
+The public shareable demo is deployed at <https://satquery-ai-public.vercel.app>.
+
+The owner-only Sites deployment is also available at <https://satquery-sentry.shrutikaverma22.chatgpt.site> for internal review.
 
 The UI uses a black-and-white brutalist control system and a full-colour satellite-style evidence basemap. The prototype currently performs real multipart upload validation and raster-header inspection. Its answer claims are deterministic representative outputs intended to demonstrate the evidence contract and orchestration surface while specialist remote-sensing models are integrated.
 
