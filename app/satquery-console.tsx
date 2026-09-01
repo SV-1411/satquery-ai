@@ -12,6 +12,7 @@ type Analysis = {
   confidence: number;
   decision: string;
   trace: string[][];
+  inputSummary?: { name: string; format: string; bytes: number; width?: number; height?: number; bands?: number; status: string; note?: string }[];
 };
 
 const cases = [
@@ -72,11 +73,11 @@ export default function SatQueryConsole() {
     setError('');
     setRunning(true);
     try {
-      const response = await fetch('/api/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, query, inputNames: files.map((file) => file.name) }),
-      });
+      const form = new FormData();
+      form.set('caseId', caseId);
+      form.set('query', query);
+      files.forEach((file) => form.append('files', file));
+      const response = await fetch('/api/analyse', { method: 'POST', body: form });
       const result = await response.json() as Analysis & { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Analysis failed.');
       setAnalysis(result);
@@ -130,10 +131,10 @@ export default function SatQueryConsole() {
           <input ref={fileInput} className="sr-only" type="file" multiple accept=".tif,.tiff,.png,.jpg,.jpeg" onChange={(event) => chooseFiles(event.target.files)} />
 
           <dl className="metadata-grid mt-5">
-            <div><dt>SENSOR A</dt><dd>{files[0]?.name ?? activeCase.sensors[0]}</dd></div>
-            <div><dt>SENSOR B</dt><dd>{files[1]?.name ?? activeCase.sensors[1]}</dd></div>
-            <div><dt>ALIGNMENT</dt><dd>{files.length ? 'PENDING CHECK' : activeCase.alignment}</dd></div>
-            <div><dt>USABLE AREA</dt><dd>{files.length ? 'PENDING' : activeCase.usable}</dd></div>
+            <div><dt>SENSOR A</dt><dd>{analysis.inputSummary?.[0]?.format ?? files[0]?.name ?? activeCase.sensors[0]}</dd></div>
+            <div><dt>SENSOR B</dt><dd>{analysis.inputSummary?.[1]?.format ?? files[1]?.name ?? activeCase.sensors[1]}</dd></div>
+            <div><dt>ALIGNMENT</dt><dd>{analysis.inputSummary?.length ? 'HEADER PASS' : activeCase.alignment}</dd></div>
+            <div><dt>RASTER SIZE</dt><dd>{analysis.inputSummary?.[0]?.width ? `${analysis.inputSummary[0].width} × ${analysis.inputSummary[0].height}` : activeCase.usable}</dd></div>
           </dl>
           {error && <p className="error-box" role="alert">INPUT / {error}</p>}
         </aside>
