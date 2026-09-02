@@ -38,3 +38,15 @@ next-env.d.ts
 /work/
 
 .vercel
+
+# Python training and inference
+/.venv/
+__pycache__/
+*.py[cod]
+D:/satquery-data/
+D:/satquery-checkpoints/
+*.pt
+*.pth
+*.safetensors
+*.tif
+*.tiff

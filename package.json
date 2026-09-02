@@ -10,7 +10,7 @@
     "build": "vinext build",
     "vercel-build": "next build --webpack",
     "start": "vinext start",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .venv"
   },
   "dependencies": {
     "next": "16.2.6",

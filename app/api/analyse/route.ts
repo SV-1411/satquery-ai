@@ -83,14 +83,40 @@ export async function POST(request: Request) {
   const caseId = String(form.get('caseId') ?? '');
   const files = form.getAll('files').filter((value): value is File => value instanceof File && value.size > 0);
   if (query.length < 5) return NextResponse.json({ error: 'Write a specific observation question.' }, { status: 422 });
+  if (files.length < 1 || files.length > 4) return NextResponse.json({ error: 'Upload between one and four observations.' }, { status: 422 });
   const summaries = await Promise.all(files.map(inspectFile));
   const rejected = summaries.find((item) => item.status === 'REJECTED');
   if (rejected) return NextResponse.json({ error: `${rejected.name}: ${rejected.note}`, inputSummary: summaries }, { status: 415 });
+  const inferenceUrl = process.env.SATQUERY_INFERENCE_URL ?? process.env.NEXT_PUBLIC_INFERENCE_URL;
+  if (inferenceUrl && files.length > 0) {
+    const proxyForm = new FormData();
+    proxyForm.set('query', query);
+    files.forEach((file) => proxyForm.append('files', file, file.name));
+    for (const key of ['modalityA', 'modalityB', 'modalityC', 'modalityD']) {
+      const value = form.get(key);
+      if (typeof value === 'string') proxyForm.set(key, value);
+    }
+    try {
+      const upstream = await fetch(`${inferenceUrl.replace(/\/$/, '')}/analyse`, {
+        method: 'POST',
+        headers: process.env.SATQUERY_INFERENCE_TOKEN ? { Authorization: `Bearer ${process.env.SATQUERY_INFERENCE_TOKEN}` } : undefined,
+        body: proxyForm,
+        cache: 'no-store',
+      });
+      const payload = await upstream.json() as Record<string, unknown>;
+      if (!upstream.ok) return NextResponse.json({ error: String(payload.detail ?? payload.error ?? 'Inference service rejected the request.'), inputSummary: summaries }, { status: upstream.status });
+      return NextResponse.json(payload);
+    } catch {
+      return NextResponse.json({ error: 'Inference service is unreachable. Start FastAPI or clear SATQUERY_INFERENCE_URL.', inputSummary: summaries }, { status: 502 });
+    }
+  }
   const fileCount = Math.max(files.length, caseId ? 2 : 0); const task = classify(query, fileCount);
   const uncertain = /(cloud|uncertain|disagree|insufficient)/i.test(query);
   await new Promise((resolve) => setTimeout(resolve, 650));
   const confidence = uncertain ? 43 : task === 'SINGLE_IMAGE_VQA' ? 76 : 82;
   return NextResponse.json({
+    runtime: 'demo',
+    model_version: 'deterministic-prototype',
     task,
     claim: uncertain ? 'THE AVAILABLE OBSERVATIONS DO NOT SUPPORT A RELIABLE CONCLUSION.' : task === 'TEXT_GUIDED_GROUNDING' ? 'TWO WATER-COVERED REGIONS MATCH THE REQUEST.' : task === 'SINGLE_IMAGE_VQA' ? 'WATER, BUILT-UP LAND AND ROAD CORRIDORS ARE VISIBLE.' : 'NEWLY INUNDATED LAND IS LIKELY PRESENT.',
     where: uncertain ? 'NO REGION RELEASED' : 'NORTH-EAST LOW-LYING REGION / ZONES A + B',

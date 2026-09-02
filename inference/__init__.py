@@ -1,0 +1,2 @@
+"""SatQuery AI inference service."""
+

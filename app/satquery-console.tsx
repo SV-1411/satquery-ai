@@ -2,7 +2,14 @@
 
 import { FormEvent, useMemo, useRef, useState } from 'react';
 
+/* Evidence masks are generated data URLs; next/image cannot optimize them. */
+/* eslint-disable @next/next/no-img-element */
+
 type Analysis = {
+  runtime?: 'demo' | 'real';
+  model_version?: string;
+  evidence?: { source?: string; mask_png_base64?: string; agreement?: number; changed_area_percent?: number; bbox_pixels?: number[] | null };
+  ai_summary?: string;
   task: string;
   claim: string;
   where: string;
@@ -12,8 +19,10 @@ type Analysis = {
   confidence: number;
   decision: string;
   trace: string[][];
-  inputSummary?: { name: string; format: string; bytes: number; width?: number; height?: number; bands?: number; status: string; note?: string }[];
+  inputSummary?: { name: string; format: string; modality?: string; modality_confidence?: number; modality_note?: string; bytes: number; width?: number; height?: number; bands?: number; status: string; note?: string }[];
 };
+
+type ModalityHint = 'AUTO' | 'OPTICAL' | 'SAR';
 
 const cases = [
   {
@@ -50,15 +59,17 @@ export default function SatQueryConsole() {
   const [mode, setMode] = useState<'fused' | 'optical' | 'sar'>('fused');
   const [query, setQuery] = useState('What changed, where, and which sensor supports it?');
   const [files, setFiles] = useState<File[]>([]);
+  const [fileModalities, setFileModalities] = useState<ModalityHint[]>([]);
   const [analysis, setAnalysis] = useState<Analysis>(initialAnalysis);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const activeCase = useMemo(() => cases.find((item) => item.id === caseId) ?? cases[0], [caseId]);
+  const evidenceMask = analysis.evidence?.mask_png_base64 ? `data:image/png;base64,${analysis.evidence.mask_png_base64}` : '';
 
   function chooseFiles(list: FileList | null) {
     if (!list) return;
-    const picked = Array.from(list).slice(0, 2);
+    const picked = Array.from(list).slice(0, 4);
     const invalid = picked.find((file) => !/\.(tif|tiff|png|jpe?g)$/i.test(file.name));
     if (invalid) {
       setError(`${invalid.name}: unsupported input. Use GeoTIFF, TIFF, PNG or JPEG.`);
@@ -66,6 +77,7 @@ export default function SatQueryConsole() {
     }
     setError('');
     setFiles(picked);
+    setFileModalities(picked.map(() => 'AUTO'));
   }
 
   async function runAnalysis(event: FormEvent) {
@@ -77,6 +89,10 @@ export default function SatQueryConsole() {
       form.set('caseId', caseId);
       form.set('query', query);
       files.forEach((file) => form.append('files', file));
+      if (files[0]) form.set('modalityA', fileModalities[0] ?? 'AUTO');
+      if (files[1]) form.set('modalityB', fileModalities[1] ?? 'AUTO');
+      if (files[2]) form.set('modalityC', fileModalities[2] ?? 'AUTO');
+      if (files[3]) form.set('modalityD', fileModalities[3] ?? 'AUTO');
       const response = await fetch('/api/analyse', { method: 'POST', body: form });
       const result = await response.json() as Analysis & { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Analysis failed.');
@@ -94,7 +110,7 @@ export default function SatQueryConsole() {
       `QUERY: ${query}`, '', `CLAIM: ${analysis.claim}`, `WHERE: ${analysis.where}`,
       `MAGNITUDE: ${analysis.magnitude}`, `SENSOR CASE: ${analysis.sensorCase}`,
       `CONFIDENCE: ${analysis.confidence}/100`, `DECISION: ${analysis.decision}`,
-      `LIMIT: ${analysis.limit}`, '', 'EXECUTION TRACE',
+      `LIMIT: ${analysis.limit}`, `AI SUMMARY: ${analysis.ai_summary ?? 'Not available in demo mode.'}`, '', 'EXECUTION TRACE',
       ...analysis.trace.map((row) => row.join(' / ')), '', `GENERATED: ${new Date().toISOString()}`,
     ].join('\n');
     const link = document.createElement('a');
@@ -119,7 +135,7 @@ export default function SatQueryConsole() {
         <aside className="border-b-4 border-black p-4 lg:min-h-[720px] lg:border-b-0 lg:border-r-4">
           <p className="section-label">01 / OBSERVATIONS</p>
           {cases.map((item) => (
-            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setFiles([]); }}>
+            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setFiles([]); setFileModalities([]); }}>
               <span className="font-mono text-[10px]">{item.code}</span><strong>{item.title}</strong><span>{item.type}</span>
             </button>
           ))}
@@ -130,9 +146,13 @@ export default function SatQueryConsole() {
           </button>
           <input ref={fileInput} className="sr-only" type="file" multiple accept=".tif,.tiff,.png,.jpg,.jpeg" onChange={(event) => chooseFiles(event.target.files)} />
 
+          {files.length > 0 && <div className="modality-list">
+            {files.map((file, index) => <label key={`${file.name}-${index}`} className="modality-row"><span>{file.name}</span><select value={fileModalities[index] ?? 'AUTO'} onChange={(event) => setFileModalities((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value as ModalityHint : value))}><option value="AUTO">AUTO DETECT</option><option value="OPTICAL">OPTICAL / MULTISPECTRAL</option><option value="SAR">SAR / RADAR</option></select></label>)}
+          </div>}
+
           <dl className="metadata-grid mt-5">
-            <div><dt>SENSOR A</dt><dd>{analysis.inputSummary?.[0]?.format ?? files[0]?.name ?? activeCase.sensors[0]}</dd></div>
-            <div><dt>SENSOR B</dt><dd>{analysis.inputSummary?.[1]?.format ?? files[1]?.name ?? activeCase.sensors[1]}</dd></div>
+            <div><dt>SENSOR A</dt><dd>{analysis.inputSummary?.[0]?.modality ?? fileModalities[0] ?? activeCase.sensors[0]}</dd></div>
+            <div><dt>SENSOR B</dt><dd>{analysis.inputSummary?.[1]?.modality ?? fileModalities[1] ?? activeCase.sensors[1]}</dd></div>
             <div><dt>ALIGNMENT</dt><dd>{analysis.inputSummary?.length ? 'HEADER PASS' : activeCase.alignment}</dd></div>
             <div><dt>RASTER SIZE</dt><dd>{analysis.inputSummary?.[0]?.width ? `${analysis.inputSummary[0].width} × ${analysis.inputSummary[0].height}` : activeCase.usable}</dd></div>
           </dl>
@@ -152,8 +172,9 @@ export default function SatQueryConsole() {
           <div className={`evidence-map map-${mode} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={`${mode} evidence map showing probable change regions`}>
             <div className="map-grid" /><div className="river river-one" /><div className="river river-two" />
             <div className="change-region change-a">A</div><div className="change-region change-b">B</div>
+            {evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
             <div className="north">N ↑</div><div className="scale">0 ━━━━━ 2 KM</div>
-            <div className="map-caption">{analysis.confidence < 50 ? 'REGIONS WITHHELD / INSUFFICIENT EVIDENCE' : `${mode.toUpperCase()} / PROBABLE NEW INUNDATION`}</div>
+            <div className="map-caption">{evidenceMask ? 'REAL / MASK GENERATED FROM UPLOADED PIXELS' : analysis.confidence < 50 ? 'REGIONS WITHHELD / INSUFFICIENT EVIDENCE' : `${mode.toUpperCase()} / PROBABLE NEW INUNDATION`}</div>
           </div>
 
           <form className="border-t-4 border-black p-4" onSubmit={runAnalysis}>
@@ -171,8 +192,9 @@ export default function SatQueryConsole() {
         </section>
 
         <aside className="p-4" aria-live="polite">
-          <div className="flex items-center justify-between gap-4"><p className="section-label">03 / EVIDENCE CONTRACT</p><span className="task-stamp">{analysis.task}</span></div>
+          <div className="flex items-center justify-between gap-4"><p className="section-label">03 / EVIDENCE CONTRACT</p><span className="task-stamp">{analysis.runtime?.toUpperCase() ?? 'DEMO'} / {analysis.task}</span></div>
           <div className="claim-box"><p>CLAIM</p><h2>{analysis.claim}</h2></div>
+          <div className="ai-summary"><p>AI SUMMARY</p><span>{analysis.ai_summary ?? 'Run an upload to generate a grounded summary from the observation evidence.'}</span></div>
           <div className="contract-row"><span>WHERE</span><p>{analysis.where}</p></div>
           <div className="contract-row"><span>HOW MUCH</span><p>{analysis.magnitude}</p></div>
           <div className="contract-row"><span>SENSOR CASE</span><p className="whitespace-pre-line">{analysis.sensorCase}</p></div>
@@ -184,6 +206,7 @@ export default function SatQueryConsole() {
           <details className="trace-box" open><summary>OBSERVABLE EXECUTION TRACE</summary>
             {analysis.trace.map(([step, tool, status]) => <div className="trace-row" key={`${step}-${tool}`}><span>{step}</span><strong>{tool}</strong><em>{status}</em></div>)}
           </details>
+          <p className="mt-3 font-mono text-[10px] uppercase">MODEL / {analysis.model_version ?? 'deterministic-prototype'}</p>
           <button className="report-button" type="button" onClick={downloadReport}>DOWNLOAD EVIDENCE REPORT ↓</button>
         </aside>
       </section>

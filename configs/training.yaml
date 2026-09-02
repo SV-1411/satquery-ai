@@ -1,0 +1,10 @@
+seed: 7
+image_size: 128
+batch_size: 4
+epochs: 3
+gradient_accumulation: 1
+mixed_precision: true
+model: satquery-pixel-v0.1
+data_root: D:/satquery-data
+checkpoint_root: D:/satquery-checkpoints
+

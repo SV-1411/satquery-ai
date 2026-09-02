@@ -1,0 +1,6 @@
+checkpoint_root: D:/satquery-checkpoints
+model: satquery-pixel-v0.1
+device: auto
+max_upload_mb: 50
+max_concurrent_requests: 1
+
