@@ -17,8 +17,8 @@ type RasterSummary = {
 function classify(query: string, fileCount: number) {
   const q = query.toLowerCase();
   if (/(changed|change|between|increased|decreased|before|after)/.test(q) && fileCount >= 2) return 'BI_TEMPORAL_CHANGE_VQA';
-  if (/(highlight|locate|where|mark|region)/.test(q)) return 'TEXT_GUIDED_GROUNDING';
   if (/(sar|radar|optical|sensor|together|fuse)/.test(q) && fileCount >= 2) return 'OPTICAL_SAR_FUSION';
+  if (/(highlight|locate|where|mark|region)/.test(q)) return 'TEXT_GUIDED_GROUNDING';
   return 'SINGLE_IMAGE_VQA';
 }
 
