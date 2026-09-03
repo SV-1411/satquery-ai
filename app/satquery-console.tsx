@@ -40,9 +40,9 @@ const cases = [
 ];
 
 const initialAnalysis: Analysis = {
-  task: 'BI_TEMPORAL_CHANGE_VQA',
-  claim: 'NEWLY INUNDATED LAND IS LIKELY PRESENT.',
-  where: 'NORTH-EAST LOW-LYING REGION / ZONES A + B',
+  task: 'READY_FOR_UPLOAD',
+  claim: 'UPLOAD AN OBSERVATION TO START.',
+  where: 'NO UPLOADED PIXELS ANALYSED YET.',
   magnitude: '2.4 KM² ESTIMATED / ±0.3 KM²',
   sensorCase: 'SAR: STRONG SUPPORT\nOPTICAL: PARTIAL AGREEMENT',
   limit: '31% OF OPTICAL PIXELS ARE CLOUD-OBSCURED.',
@@ -60,7 +60,18 @@ export default function SatQueryConsole() {
   const [query, setQuery] = useState('What changed, where, and which sensor supports it?');
   const [files, setFiles] = useState<File[]>([]);
   const [fileModalities, setFileModalities] = useState<ModalityHint[]>([]);
-  const [analysis, setAnalysis] = useState<Analysis>(initialAnalysis);
+  const [analysis, setAnalysis] = useState<Analysis>({
+    ...initialAnalysis,
+    task: 'READY_FOR_UPLOAD',
+    claim: 'UPLOAD AN OBSERVATION TO START.',
+    where: 'NO UPLOADED PIXELS ANALYSED YET.',
+    magnitude: 'NOT CALCULATED YET',
+    sensorCase: 'AWAITING UPLOAD',
+    limit: 'Upload one to four images, then ask a specific question.',
+    confidence: 0,
+    decision: 'READY TO ANALYSE',
+    trace: [['01', 'UPLOAD_GATE', 'WAITING']],
+  });
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -193,8 +204,7 @@ export default function SatQueryConsole() {
           </div>
 
           <div className={`evidence-map map-${mode} ${mapPreview ? 'has-uploaded-map' : ''} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={mapPreview ? 'Map generated from the newly uploaded imagery and evidence mask' : `${mode} evidence map showing probable change regions`}>
-            {!mapPreview && <><div className="map-grid" /><div className="river river-one" /><div className="river river-two" />
-            <div className="change-region change-a">A</div><div className="change-region change-b">B</div></>}
+            {!mapPreview && <div className="empty-evidence">UPLOAD ONE TO FOUR IMAGES, ASK A QUESTION, THEN RUN THE ANALYSIS.<small>YOUR UPLOADED IMAGE AND ITS EVIDENCE LAYERS WILL APPEAR HERE.</small></div>}
             {mapPreview && <img key={mapPreview.slice(-40)} className="evidence-base" src={mapPreview} alt="Map rendered from the uploaded observation" />}
             {semanticOverlay && <img className="semantic-overlay" src={semanticOverlay} alt="Colour-coded evidence derived from the uploaded pixels" />}
             {evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
