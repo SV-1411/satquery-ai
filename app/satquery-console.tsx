@@ -74,6 +74,7 @@ export default function SatQueryConsole() {
   });
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [selectedLayerId, setSelectedLayerId] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const activeCase = useMemo(() => cases.find((item) => item.id === caseId) ?? cases[0], [caseId]);
   const evidenceMask = analysis.evidence?.mask_png_base64 ? `data:image/png;base64,${analysis.evidence.mask_png_base64}` : '';
@@ -81,8 +82,12 @@ export default function SatQueryConsole() {
   const beforePreview = analysis.evidence?.before_png_base64 ? `data:image/png;base64,${analysis.evidence.before_png_base64}` : '';
   const afterPreview = analysis.evidence?.after_png_base64 ? `data:image/png;base64,${analysis.evidence.after_png_base64}` : '';
   const semanticOverlay = analysis.evidence?.semantic_png_base64 ? `data:image/png;base64,${analysis.evidence.semantic_png_base64}` : '';
+  const evidenceLayers = analysis.evidence?.layers ?? [];
+  const selectedLayer = evidenceLayers.find((layer) => layer.id === selectedLayerId && layer.png_base64);
+  const displayedMap = selectedLayer?.png_base64 ? `data:image/png;base64,${selectedLayer.png_base64}` : mapPreview;
 
   function resetForNewUpload(message: string) {
+    setSelectedLayerId('');
     setAnalysis({
       ...initialAnalysis,
       task: 'READY_FOR_UPLOAD',
@@ -117,6 +122,7 @@ export default function SatQueryConsole() {
     event.preventDefault();
     setError('');
     setRunning(true);
+    setSelectedLayerId('');
     setAnalysis((current) => ({ ...current, evidence: undefined, ai_summary: 'Analysing the newly uploaded images. The map will update when evidence is ready.', trace: [['01', 'UPLOADED_PIXELS', 'ANALYSING']] }));
     try {
       const form = new FormData();
@@ -203,13 +209,13 @@ export default function SatQueryConsole() {
             </div>
           </div>
 
-          <div className={`evidence-map map-${mode} ${mapPreview ? 'has-uploaded-map' : ''} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={mapPreview ? 'Map generated from the newly uploaded imagery and evidence mask' : `${mode} evidence map showing probable change regions`}>
-            {!mapPreview && <div className="empty-evidence">UPLOAD ONE TO FOUR IMAGES, ASK A QUESTION, THEN RUN THE ANALYSIS.<small>YOUR UPLOADED IMAGE AND ITS EVIDENCE LAYERS WILL APPEAR HERE.</small></div>}
-            {mapPreview && <img key={mapPreview.slice(-40)} className="evidence-base" src={mapPreview} alt="Map rendered from the uploaded observation" />}
-            {semanticOverlay && <img className="semantic-overlay" src={semanticOverlay} alt="Colour-coded evidence derived from the uploaded pixels" />}
-            {evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
+          <div className={`evidence-map map-${mode} ${displayedMap ? 'has-uploaded-map' : ''} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={displayedMap ? 'Map generated from the newly uploaded imagery and selected evidence layer' : `${mode} evidence map showing probable change regions`}>
+            {!displayedMap && <div className="empty-evidence">UPLOAD ONE TO FOUR IMAGES, ASK A QUESTION, THEN RUN THE ANALYSIS.<small>YOUR UPLOADED IMAGE AND ITS EVIDENCE LAYERS WILL APPEAR HERE.</small></div>}
+            {displayedMap && <img key={displayedMap.slice(-40)} className="evidence-base" src={displayedMap} alt={selectedLayer ? `${selectedLayer.title} image layer` : 'Map rendered from the uploaded observation'} />}
+            {!selectedLayer && semanticOverlay && <img className="semantic-overlay" src={semanticOverlay} alt="Colour-coded evidence derived from the uploaded pixels" />}
+            {!selectedLayer && evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
             <div className="north">N ↑</div><div className="scale">0 ━━━━━ 2 KM</div>
-            <div className="map-caption">{mapPreview ? analysis.evidence?.map_label ?? 'UPDATED FROM UPLOADED PIXELS' : 'UPLOAD AN IMAGE TO GENERATE EVIDENCE'}</div>
+            <div className="map-caption">{selectedLayer ? `FILTER VIEW / ${selectedLayer.title}` : displayedMap ? analysis.evidence?.map_label ?? 'UPDATED FROM UPLOADED PIXELS' : 'UPLOAD AN IMAGE TO GENERATE EVIDENCE'}</div>
             {analysis.evidence?.legend?.length ? <div className="evidence-legend">{analysis.evidence.legend.map((item) => <span key={item}>{item}</span>)}</div> : null}
           </div>
 
@@ -220,10 +226,11 @@ export default function SatQueryConsole() {
 
           {analysis.evidence?.layers?.length ? <section className="evidence-layers" aria-label="Visual evidence layers derived from the upload">
             <div className="layer-heading"><strong>VISUAL EVIDENCE LAYERS</strong><span>FILTERS AVAILABLE FOR THIS UPLOAD</span></div>
-            <div className="layer-grid">{analysis.evidence.layers.map((layer) => <article className={`layer-card layer-${layer.status.toLowerCase().replaceAll('_', '-')}`} key={layer.id}>
+            <p className="layer-instruction">SELECT ANY AVAILABLE LAYER TO INSPECT THAT EXACT FILTER IN THE MAIN EVIDENCE FIELD.</p>
+            <div className="layer-grid">{analysis.evidence.layers.map((layer) => <button type="button" disabled={!layer.png_base64} onClick={() => setSelectedLayerId(layer.id)} className={`layer-card layer-${layer.status.toLowerCase().replaceAll('_', '-')} ${selectedLayerId === layer.id ? 'layer-card-selected' : ''}`} key={layer.id}>
               {layer.png_base64 ? <img src={`data:image/png;base64,${layer.png_base64}`} alt={`${layer.title}: ${layer.meaning}`} /> : <div className="layer-unavailable">NOT AVAILABLE<br />FOR THIS INPUT</div>}
               <div><strong>{layer.title}</strong><em>{layer.status.replaceAll('_', ' ')}</em><p>{layer.meaning}</p></div>
-            </article>)}</div>
+            </button>)}</div>
           </section> : null}
 
           <form className="border-t-4 border-black p-4" onSubmit={runAnalysis}>
