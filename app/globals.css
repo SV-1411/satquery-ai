@@ -71,6 +71,12 @@ button:disabled { cursor: wait; opacity: .55; }
 .layer-card em { margin-top: 4px; color: #116329; }
 .layer-not-available em { color: #a12d00; }
 .layer-card p { margin: 6px 0 0; font-size: 10px; line-height: 1.2; }
+.sensor-ledger { border-top: 4px solid #000; padding: 12px; background: #e6f7ff; }
+.sensor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.sensor-grid article { min-width: 0; border: 3px solid #000; padding: 8px; background: #fff; }
+.sensor-grid strong, .sensor-grid span, .sensor-grid em { display: block; font-family: var(--font-geist-mono), monospace; font-size: 8px; font-weight: 900; font-style: normal; }
+.sensor-grid p { margin: 7px 0; overflow: hidden; font-size: 11px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.sensor-grid em { margin-top: 7px; border-top: 2px solid #000; padding-top: 6px; color: #075a8d; }
 .run-button { border-left: 4px solid #000; background: #000; color: #fff; padding: 0 20px; font-weight: 950; }
 .suggestion-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .suggestion-row button { border: 2px solid #000; background: #fff; padding: 6px 8px; font-family: var(--font-geist-mono), monospace; font-size: 8px; font-weight: 800; text-align: left; text-transform: uppercase; }

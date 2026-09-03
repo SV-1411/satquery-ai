@@ -255,15 +255,16 @@ class Executor:
         means = [float(raster.data.mean()) for raster in rasters]
         spread = float(np.std(means)) if len(means) > 1 else 0.0
         confidence = int(np.clip(55 + (15 if spread < 0.12 else 0), 0, 70))
+        asks_for_change = any(token in query.lower() for token in ("change", "changed", "between", "before", "after"))
         return self._with_vlm_summary(rasters, query, {
             "claim": "MULTIPLE UPLOADED OBSERVATIONS WERE CATALOGUED AND COMPARED.",
-            "where": "COMMON SPATIAL REGION NOT RELEASED WITHOUT A SPECIFIC CHANGE OR FUSION REQUEST",
+            "where": "NO SINGLE CHANGE REGION RELEASED: A SPATIAL CHANGE MAP REQUIRES EXACTLY TWO MATCHED OBSERVATIONS.",
             "magnitude": f"{len(rasters)} OBSERVATIONS / MEAN-SIGNAL SPREAD {spread:.3f}",
             "sensorCase": modality_text,
-            "limit": "Ask a specific change, fusion, grounding, or captioning question for a spatial claim.",
+            "limit": "This upload contains more than one comparison candidate. Use exactly two co-registered images for a change map, or one optical plus one SAR image for fusion.",
             "confidence": confidence,
             "decision": "CONTEXT READY / SPECIFY ANALYTIC QUESTION",
-            "ai_summary": f"AI SUMMARY: I received {len(rasters)} observations: {modality_text}. Their normalized mean-signal spread is {spread:.3f}. No change or land-cover claim is released because the query does not specify which relationship to test.",
+            "ai_summary": f"AI SUMMARY: I received {len(rasters)} observations: {modality_text}. Their normalized mean-signal spread is {spread:.3f}. {'No change map was released because more than two images were uploaded; select one matched before/after pair for that test.' if asks_for_change else 'No change or land-cover claim is released until a specific matched-pair or fusion question is selected.'}",
             "evidence": {"source": "uploaded_pixels", "visual_png_base64": _preview_grid(rasters), "analysis_path": "MULTI-OBSERVATION SYNTHESIS -> INPUT CATALOGUE -> SUMMARY ONLY", "layers": [{"id": f"upload-{index}", "title": f"UPLOAD {index + 1}", "status": "AVAILABLE", "meaning": f"{raster.modality} observation included in the summary.", "png_base64": _preview_png(raster)} for index, raster in enumerate(rasters)], "map_label": "UPLOADED OBSERVATION GRID"},
             "diagnostics": {"mean_signals": [round(value, 4) for value in means], "query": query},
         })

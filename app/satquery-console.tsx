@@ -134,7 +134,15 @@ export default function SatQueryConsole() {
       if (files[2]) form.set('modalityC', fileModalities[2] ?? 'AUTO');
       if (files[3]) form.set('modalityD', fileModalities[3] ?? 'AUTO');
       const response = await fetch('/api/analyse', { method: 'POST', body: form });
-      const result = await response.json() as Analysis & { error?: string };
+      let result: Analysis & { error?: string };
+      try {
+        result = await response.json() as Analysis & { error?: string };
+      } catch {
+        if (response.status === 413) {
+          throw new Error('This hosted page rejected the large raster upload before analysis. Open http://localhost:3000 for the running GPU service, or upload a smaller preview image here.');
+        }
+        throw new Error(`The upload gateway returned ${response.status} instead of an analysis result.`);
+      }
       if (!response.ok) throw new Error(result.error ?? 'Analysis failed.');
       setAnalysis(result);
     } catch (caught) {
@@ -231,6 +239,15 @@ export default function SatQueryConsole() {
               {layer.png_base64 ? <img src={`data:image/png;base64,${layer.png_base64}`} alt={`${layer.title}: ${layer.meaning}`} /> : <div className="layer-unavailable">NOT AVAILABLE<br />FOR THIS INPUT</div>}
               <div><strong>{layer.title}</strong><em>{layer.status.replaceAll('_', ' ')}</em><p>{layer.meaning}</p></div>
             </button>)}</div>
+          </section> : null}
+
+          {analysis.inputSummary?.length ? <section className="sensor-ledger" aria-label="Sensor inputs and analysis route">
+            <div className="layer-heading"><strong>SENSOR INPUT LEDGER</strong><span>EVERY FILE RECEIVED BY THE ANALYSIS</span></div>
+            <div className="sensor-grid">{analysis.inputSummary.map((input, index) => <article key={`${input.name}-${index}`}>
+              <strong>INPUT {String(index + 1).padStart(2, '0')} / {input.modality ?? 'AUTO'}</strong>
+              <p>{input.name}</p><span>{input.format} / {input.bands ?? '?'} BANDS / {input.width ?? '?'} × {input.height ?? '?'}</span>
+              <em>{input.status} → {analysis.task}</em>
+            </article>)}</div>
           </section> : null}
 
           <form className="border-t-4 border-black p-4" onSubmit={runAnalysis}>

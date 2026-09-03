@@ -61,6 +61,20 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(evidence["visual_png_base64"], evidence["after_png_base64"])
         self.assertNotEqual(evidence["before_png_base64"], evidence["after_png_base64"])
 
+    def test_more_than_two_change_inputs_are_not_silently_dropped(self):
+        image = Image.new("RGB", (32, 32), color=(30, 70, 40))
+        from io import BytesIO
+        payload = BytesIO()
+        image.save(payload, format="PNG")
+        files = [("files", (f"observation-{index}.png", payload.getvalue(), "image/png")) for index in range(3)]
+        with patch.object(executor.vlm, "summarize", return_value=(None, "test-template")):
+            response = TestClient(app).post("/analyse", data={"query": "What changed between these dates?"}, files=files)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["task"], "MULTI_OBSERVATION_SYNTHESIS")
+        self.assertEqual(len(body["inputSummary"]), 3)
+        self.assertIn("exactly two", body["limit"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

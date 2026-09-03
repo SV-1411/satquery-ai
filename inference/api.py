@@ -35,6 +35,11 @@ async def analyse(query: str = Form(...), files: list[UploadFile] = File(...), m
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     task = route_query(query, len(rasters))
     modalities = {raster.modality for raster in rasters}
+    # A spatial change mask is only defensible for one matched before/after
+    # pair. More inputs are retained and shown through the multi-observation
+    # route rather than silently dropping intermediate or mixed-sensor files.
+    if task == "BI_TEMPORAL_CHANGE_VQA" and len(rasters) > 2:
+        task = "MULTI_OBSERVATION_SYNTHESIS"
     if task == "OPTICAL_SAR_FUSION" and not {"OPTICAL", "SAR"}.issubset(modalities):
         raise HTTPException(status_code=422, detail="Optical/SAR fusion requires at least one OPTICAL and one SAR upload. Use the modality selectors or rename the files.")
     if task == "BI_TEMPORAL_CHANGE_VQA" and len(rasters) >= 2:
