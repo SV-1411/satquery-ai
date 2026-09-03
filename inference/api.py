@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 from .models.registry import ModelRegistry
-from .orchestration.executor import Executor
+from .orchestration.executor import Executor, _preview_png
 from .orchestration.router import route_query
 from .preprocessing.geospatial_checks import pair_check
 from .preprocessing.raster_loader import load_raster
@@ -21,6 +21,20 @@ def summary(raster, payload_size: int) -> RasterSummary:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "runtime": "real" if registry.ready else "blocked", "device": str(registry.device), "gpu": registry.device.type == "cuda", "model_ready": registry.ready, "model_version": registry.version, "checkpoint": str(registry.checkpoint), "ollama_model": executor.vlm.model, "ollama_ready": executor.vlm.available(), "load_error": registry.load_error}
+
+
+@app.post("/preview")
+async def preview(files: list[UploadFile] = File(...), modalityA: str = Form("AUTO"), modalityB: str = Form("AUTO"), modalityC: str = Form("AUTO"), modalityD: str = Form("AUTO")) -> dict:
+    """Render upload-safe previews before the user runs an analysis."""
+    if not 1 <= len(files) <= 4:
+        raise HTTPException(status_code=422, detail="Send between one and four raster files.")
+    payloads = [await item.read() for item in files]
+    try:
+        hints = [modalityA, modalityB, modalityC, modalityD]
+        rasters = [load_raster(item.filename or f"observation-{i}", payload, hints[i]) for i, (item, payload) in enumerate(zip(files, payloads))]
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    return {"previews": [_preview_png(raster) for raster in rasters]}
 
 
 @app.post("/analyse", response_model=AnalysisResponse)

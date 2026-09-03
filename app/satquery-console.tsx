@@ -26,16 +26,16 @@ type ModalityHint = 'AUTO' | 'OPTICAL' | 'SAR';
 
 const cases = [
   {
-    id: 'assam-flood', code: 'CASE_001', title: 'ASSAM FLOOD', type: 'OPTICAL + SAR / TWO DATES',
-    sensors: ['SENTINEL-2', 'SENTINEL-1'], alignment: 'PASS / 0.81 PX', usable: '87.4%',
+    id: 'change-pair', code: 'MODE_001', title: 'CHANGE PAIR', type: 'TWO MATCHED OBSERVATIONS',
+    sensors: ['OPTICAL / SAR', 'OPTICAL / SAR'], alignment: 'MATCHED PAIR REQUIRED', usable: 'TWO INPUTS', prompt: 'What changed between these two uploaded observations? Show the changed pixels.',
   },
   {
-    id: 'urban-water', code: 'CASE_002', title: 'URBAN WATER', type: 'SAR / SINGLE IMAGE',
-    sensors: ['RISAT SAR', 'NOT REQUIRED'], alignment: 'SINGLE INPUT', usable: '96.1%',
+    id: 'single-observation', code: 'MODE_002', title: 'SINGLE OBSERVATION', type: 'ONE IMAGE / VISUAL SIGNALS',
+    sensors: ['AUTO DETECT', 'NOT REQUIRED'], alignment: 'SINGLE INPUT', usable: 'ONE INPUT', prompt: 'Highlight water-covered regions and explain the evidence in simple words.',
   },
   {
-    id: 'built-change', code: 'CASE_003', title: 'BUILT CHANGE', type: 'OPTICAL / TWO DATES',
-    sensors: ['CARTOSAT-2S', 'CARTOSAT-2S'], alignment: 'PASS / 0.64 PX', usable: '91.8%',
+    id: 'sensor-fusion', code: 'MODE_003', title: 'SENSOR FUSION', type: 'ONE OPTICAL + ONE SAR',
+    sensors: ['OPTICAL', 'SAR'], alignment: 'MATCHED PAIR REQUIRED', usable: 'TWO INPUTS', prompt: 'Are the optical and SAR signals in agreement? Show the evidence from each sensor.',
   },
 ];
 
@@ -75,6 +75,7 @@ export default function SatQueryConsole() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [selectedLayerId, setSelectedLayerId] = useState('');
+  const [uploadPreview, setUploadPreview] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const activeCase = useMemo(() => cases.find((item) => item.id === caseId) ?? cases[0], [caseId]);
   const evidenceMask = analysis.evidence?.mask_png_base64 ? `data:image/png;base64,${analysis.evidence.mask_png_base64}` : '';
@@ -84,10 +85,11 @@ export default function SatQueryConsole() {
   const semanticOverlay = analysis.evidence?.semantic_png_base64 ? `data:image/png;base64,${analysis.evidence.semantic_png_base64}` : '';
   const evidenceLayers = analysis.evidence?.layers ?? [];
   const selectedLayer = evidenceLayers.find((layer) => layer.id === selectedLayerId && layer.png_base64);
-  const displayedMap = selectedLayer?.png_base64 ? `data:image/png;base64,${selectedLayer.png_base64}` : mapPreview;
+  const displayedMap = selectedLayer?.png_base64 ? `data:image/png;base64,${selectedLayer.png_base64}` : mapPreview || uploadPreview;
 
   function resetForNewUpload(message: string) {
     setSelectedLayerId('');
+    setUploadPreview('');
     setAnalysis({
       ...initialAnalysis,
       task: 'READY_FOR_UPLOAD',
@@ -104,7 +106,7 @@ export default function SatQueryConsole() {
     });
   }
 
-  function chooseFiles(list: FileList | null) {
+  async function chooseFiles(list: FileList | null) {
     if (!list) return;
     const picked = Array.from(list).slice(0, 4);
     const invalid = picked.find((file) => !/\.(tif|tiff|png|jpe?g)$/i.test(file.name));
@@ -116,6 +118,16 @@ export default function SatQueryConsole() {
     setFiles(picked);
     setFileModalities(picked.map(() => 'AUTO'));
     resetForNewUpload('New images are ready. Click Run to replace the old map with evidence from these uploads.');
+    const previewForm = new FormData();
+    picked.forEach((file) => previewForm.append('files', file));
+    picked.forEach((_, index) => previewForm.set(`modality${String.fromCharCode(65 + index)}`, 'AUTO'));
+    try {
+      const response = await fetch('/api/preview', { method: 'POST', body: previewForm });
+      const payload = await response.json() as { previews?: string[] };
+      if (response.ok && payload.previews?.[0]) setUploadPreview(`data:image/png;base64,${payload.previews[0]}`);
+    } catch {
+      // Preview is a convenience; the full analysis endpoint remains authoritative.
+    }
   }
 
   async function runAnalysis(event: FormEvent) {
@@ -143,7 +155,15 @@ export default function SatQueryConsole() {
         }
         throw new Error(`The upload gateway returned ${response.status} instead of an analysis result.`);
       }
-      if (!response.ok) throw new Error(result.error ?? 'Analysis failed.');
+      if (!response.ok) {
+        if (result.error?.includes('Pair CRS values differ')) {
+          throw new Error('These files use different map coordinate systems, so they are valid single-image samples but not a valid before/after pair. For change detection, use before_optical_A.tif with after_optical_corrected_D.tif from data/test/change_detection_demo.');
+        }
+        if (result.error?.includes('Pair dimensions differ')) {
+          throw new Error('These files have different pixel grids. Use a matched pair with the same footprint and dimensions, or select a single-image/sensor-fusion mode.');
+        }
+        throw new Error(result.error ?? 'Analysis failed.');
+      }
       setAnalysis(result);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Analysis failed.');
@@ -181,16 +201,16 @@ export default function SatQueryConsole() {
 
       <section className="grid border-b-4 border-black lg:grid-cols-[280px_minmax(0,1fr)_360px]">
         <aside className="border-b-4 border-black p-4 lg:min-h-[720px] lg:border-b-0 lg:border-r-4">
-          <p className="section-label">01 / OBSERVATIONS</p>
+          <p className="section-label">01 / ANALYSIS MODE</p>
           {cases.map((item) => (
-            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setFiles([]); setFileModalities([]); resetForNewUpload('Choose images and run a new analysis for this case.'); }}>
+            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setQuery(item.prompt); setFiles([]); setFileModalities([]); resetForNewUpload('Choose images and run a new analysis for this mode.'); }}>
               <span className="font-mono text-[10px]">{item.code}</span><strong>{item.title}</strong><span>{item.type}</span>
             </button>
           ))}
 
           <button className="upload-box mt-5 w-full" onClick={() => fileInput.current?.click()} type="button">
             <span>+</span><strong>{files.length ? `${files.length} OBSERVATION${files.length > 1 ? 'S' : ''} LOADED` : 'ADD OBSERVATION'}</strong>
-            <small>{files.length ? files.map((file) => file.name).join(' / ') : 'GEOTIFF / TIFF / BENCHMARK IMAGE'}</small>
+            <small>{files.length ? files.map((file) => file.name).join(' / ') : 'GEOTIFF / TIFF / PNG / JPEG'}</small>
           </button>
           <input ref={fileInput} className="sr-only" type="file" multiple accept=".tif,.tiff,.png,.jpg,.jpeg" onChange={(event) => chooseFiles(event.target.files)} />
 
@@ -223,7 +243,7 @@ export default function SatQueryConsole() {
             {!selectedLayer && semanticOverlay && <img className="semantic-overlay" src={semanticOverlay} alt="Colour-coded evidence derived from the uploaded pixels" />}
             {!selectedLayer && evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
             <div className="north">N ↑</div><div className="scale">0 ━━━━━ 2 KM</div>
-            <div className="map-caption">{selectedLayer ? `FILTER VIEW / ${selectedLayer.title}` : displayedMap ? analysis.evidence?.map_label ?? 'UPDATED FROM UPLOADED PIXELS' : 'UPLOAD AN IMAGE TO GENERATE EVIDENCE'}</div>
+            <div className="map-caption">{selectedLayer ? `FILTER VIEW / ${selectedLayer.title}` : mapPreview ? analysis.evidence?.map_label ?? 'UPDATED FROM UPLOADED PIXELS' : uploadPreview ? 'UPLOADED PREVIEW / RUN TO GENERATE EVIDENCE' : 'UPLOAD AN IMAGE TO GENERATE EVIDENCE'}</div>
             {analysis.evidence?.legend?.length ? <div className="evidence-legend">{analysis.evidence.legend.map((item) => <span key={item}>{item}</span>)}</div> : null}
           </div>
 
@@ -265,7 +285,7 @@ export default function SatQueryConsole() {
         </section>
 
         <aside className="p-4" aria-live="polite">
-          <div className="flex items-center justify-between gap-4"><p className="section-label">03 / EVIDENCE CONTRACT</p><span className="task-stamp">{analysis.runtime?.toUpperCase() ?? 'DEMO'} / {analysis.task}</span></div>
+          <div className="flex items-center justify-between gap-4"><p className="section-label">03 / EVIDENCE CONTRACT</p><span className="task-stamp">{analysis.runtime ? `${analysis.runtime.toUpperCase()} / ${analysis.task}` : 'READY / NO UPLOAD'}</span></div>
           <div className="claim-box"><p>CLAIM</p><h2>{analysis.claim}</h2></div>
           <div className="ai-summary"><p>AI SUMMARY</p><span>{analysis.ai_summary ?? 'Run an upload to generate a grounded summary from the observation evidence.'}</span></div>
           {analysis.evidence?.analysis_path && <div className="analysis-path"><p>HOW THIS WAS DERIVED</p><span>{analysis.evidence.analysis_path}</span></div>}
@@ -280,7 +300,7 @@ export default function SatQueryConsole() {
           <details className="trace-box" open><summary>OBSERVABLE EXECUTION TRACE</summary>
             {analysis.trace.map(([step, tool, status]) => <div className="trace-row" key={`${step}-${tool}`}><span>{step}</span><strong>{tool}</strong><em>{status}</em></div>)}
           </details>
-          <p className="mt-3 font-mono text-[10px] uppercase">MODEL / {analysis.model_version ?? 'deterministic-prototype'}</p>
+          <p className="mt-3 font-mono text-[10px] uppercase">MODEL / {analysis.model_version ?? 'LOCAL GPU MODEL WHEN ANALYSIS RUNS'}</p>
           <button className="report-button" type="button" onClick={downloadReport}>DOWNLOAD EVIDENCE REPORT ↓</button>
         </aside>
       </section>

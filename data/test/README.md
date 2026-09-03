@@ -13,6 +13,7 @@ Upload one of these files:
 * `sentinel2_sample.tif` (3-band Sentinel-2 sample GeoTIFF)
 * `sentinel2_sample.png` (visual version of the same sample)
 * `landsat_style_rgb.byte.tif`
+  - Single-image sample only; do not pair it with `landsat_style_rgb2.byte.tif` for change detection because their map grids differ.
 * `goes_satellite_sample.tif`
 * `world_rgb_sample.tif`
 

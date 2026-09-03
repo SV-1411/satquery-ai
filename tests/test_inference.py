@@ -15,6 +15,13 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(route_query("Use optical and SAR together.", 2), "OPTICAL_SAR_FUSION")
         self.assertEqual(route_query("Highlight the water body.", 1), "TEXT_GUIDED_GROUNDING")
 
+    def test_preview_returns_an_uploaded_image_render(self):
+        sample = Path("public/evidence-map.png")
+        with sample.open("rb") as handle:
+            response = TestClient(app).post("/preview", files={"files": (sample.name, handle, "image/png")})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["previews"][0])
+
     def test_real_api_returns_uploaded_pixel_evidence(self):
         sample = Path("public/evidence-map.png")
         with patch.object(executor.vlm, "summarize", return_value=(None, "test-template")):
