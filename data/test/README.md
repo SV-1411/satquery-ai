@@ -1,6 +1,8 @@
 # SatQuery AI test data
 
-This is a small public test pack for the current SatQuery AI upload interface. It is intended for UI/API testing only. The current deployed app still returns deterministic demo claims; it does not yet run a trained model on these pixels.
+This is the separate `test` image pack for exercising the upload interface end to end. The files were pulled with the public repository and are deliberately small enough for normal testing. The app analyses the uploaded pixels, draws the uploaded image as the map base, overlays a fresh evidence mask, and asks the local Qwen2.5-VL model for a plain-language summary.
+
+For a single optical image, the UI also shows the original image plus water-consistent, vegetation, built-up-like, and surface-brightness visual layers. Surface temperature and air/atmosphere are deliberately marked **not available** unless a source provides the necessary thermal or atmospheric measurements; they are never fabricated from ordinary RGB/SAR imagery.
 
 ## Quick tests
 
@@ -14,10 +16,10 @@ Upload one of these files:
 * `goes_satellite_sample.tif`
 * `world_rgb_sample.tif`
 
-Use mode `OPTICAL` and ask:
+Use `AUTO DETECT` (or `OPTICAL` if the format has no useful metadata) and ask:
 
 ```text
-Describe the land-cover and major objects visible in this image.
+Describe this uploaded observation in simple words. Highlight water-consistent areas and state the main caution.
 ```
 
 ### Optical-SAR pair
@@ -27,10 +29,10 @@ The `change_detection_demo` folder comes from a small registered/aligned remote-
 * `before_optical_A.tif` = Gaofen-2 pre-event optical image.
 * `after_sar_B.tif` = Gaofen-3 post-event SAR image.
 
-Upload both, choose `FUSED`, and ask:
+Upload both, select `OPTICAL` for `before_optical_A.tif` and `SAR` for `after_sar_B.tif`, then ask:
 
 ```text
-Use the optical and SAR images together to identify built-up and water-covered regions.
+Are the optical and SAR signals in agreement? Explain the measured result simply and state what needs human review.
 ```
 
 ### Bi-temporal change test
@@ -40,13 +42,27 @@ Upload:
 * `before_optical_A.tif`
 * `after_optical_corrected_D.tif`
 
-Choose `OPTICAL` and ask:
+Choose `OPTICAL` for both, then ask:
 
 ```text
-What changed between these two dates, and where did the change occur?
+What changed between these two uploaded observations? Show the changed pixels on the map and explain the result in simple words.
 ```
 
-`change_mask_E.png` is the reference mask for this sample, but the current UI does not compare against it yet. `annotations_A.json` contains the source annotation.
+`change_mask_E.png` is the reference mask for visual inspection. `annotations_A.json` contains the source annotation.
+
+### Map-update check
+
+1. Upload `sentinel2_sample.png` and run the single-image query above.
+2. Upload `world_rgb_sample.tif` and run the same query.
+3. The old map clears as soon as the new file is selected. After each run, the map must show that newly uploaded image with a new mask; it must not retain the previous image or the old static `A/B` boxes.
+
+### Multiple-upload summary
+
+Upload `sentinel2_sample.tif`, `landsat_style_rgb.byte.tif`, `world_rgb_sample.tif`, and `goes_satellite_sample.tif`, then ask:
+
+```text
+Summarize the differences between these uploaded observations in simple words. Do not infer a real-world change unless the images are a matched pair.
+```
 
 ## Sources and attribution
 
@@ -59,5 +75,5 @@ What changed between these two dates, and where did the change occur?
 * A real change pair must show the same geographic footprint at different times.
 * A real optical-SAR pair must be co-registered and cover the same area.
 * A JPEG/PNG may not contain CRS or band metadata.
-* The current Vercel map is a static evidence backdrop, not a map of the uploaded scene.
-* Current claims and confidence values are illustrative until the GPU inference backend is connected.
+* A change result is an image-difference signal, not proof of the cause of that difference.
+* The baseline must be verified against aligned, dated source data before operational use.

@@ -21,11 +21,27 @@ class RasterSummary(BaseModel):
     note: str | None = None
 
 
+class EvidenceLayer(BaseModel):
+    id: str
+    title: str
+    status: str
+    meaning: str
+    png_base64: str | None = None
+
+
 class Evidence(BaseModel):
     source: str = "uploaded_pixels"
     changed_area_percent: float | None = None
     bbox_pixels: list[int] | None = None
     mask_png_base64: str | None = None
+    visual_png_base64: str | None = None
+    before_png_base64: str | None = None
+    after_png_base64: str | None = None
+    map_label: str | None = None
+    semantic_png_base64: str | None = None
+    legend: list[str] = Field(default_factory=list)
+    analysis_path: str | None = None
+    layers: list[EvidenceLayer] = Field(default_factory=list)
     agreement: float | None = None
 
 

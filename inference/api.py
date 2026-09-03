@@ -50,12 +50,12 @@ async def analyse(query: str = Form(...), files: list[UploadFile] = File(...), m
             raise HTTPException(status_code=422, detail=message)
     trace = [["01", "RASTER_VALIDATOR", "PASSED"], ["02", "QUERY_ROUTER", task]]
     if task == "BI_TEMPORAL_CHANGE_VQA" and len(rasters) >= 2:
-        result = executor.change(rasters[0], rasters[-1])
+        result = executor.change(rasters[0], rasters[-1], query)
         tool = "PIXEL_CHANGE_ANALYST"
     elif task == "OPTICAL_SAR_FUSION" and len(rasters) >= 2:
         optical = next(raster for raster in rasters if raster.modality == "OPTICAL")
         sar = next(raster for raster in rasters if raster.modality == "SAR")
-        result = executor.fusion(optical, sar)
+        result = executor.fusion(optical, sar, query)
         tool = "OPTICAL_SAR_FUSION_BASELINE"
     elif task == "MULTI_OBSERVATION_SYNTHESIS":
         result = executor.multi_summary(rasters, query)

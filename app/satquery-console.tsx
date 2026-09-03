@@ -8,7 +8,7 @@ import { FormEvent, useMemo, useRef, useState } from 'react';
 type Analysis = {
   runtime?: 'demo' | 'real';
   model_version?: string;
-  evidence?: { source?: string; mask_png_base64?: string; agreement?: number; changed_area_percent?: number; bbox_pixels?: number[] | null };
+  evidence?: { source?: string; mask_png_base64?: string; visual_png_base64?: string; before_png_base64?: string; after_png_base64?: string; semantic_png_base64?: string; map_label?: string; analysis_path?: string; legend?: string[]; layers?: { id: string; title: string; status: string; meaning: string; png_base64?: string }[]; agreement?: number; changed_area_percent?: number; bbox_pixels?: number[] | null };
   ai_summary?: string;
   task: string;
   claim: string;
@@ -66,6 +66,27 @@ export default function SatQueryConsole() {
   const fileInput = useRef<HTMLInputElement>(null);
   const activeCase = useMemo(() => cases.find((item) => item.id === caseId) ?? cases[0], [caseId]);
   const evidenceMask = analysis.evidence?.mask_png_base64 ? `data:image/png;base64,${analysis.evidence.mask_png_base64}` : '';
+  const mapPreview = analysis.evidence?.visual_png_base64 ? `data:image/png;base64,${analysis.evidence.visual_png_base64}` : '';
+  const beforePreview = analysis.evidence?.before_png_base64 ? `data:image/png;base64,${analysis.evidence.before_png_base64}` : '';
+  const afterPreview = analysis.evidence?.after_png_base64 ? `data:image/png;base64,${analysis.evidence.after_png_base64}` : '';
+  const semanticOverlay = analysis.evidence?.semantic_png_base64 ? `data:image/png;base64,${analysis.evidence.semantic_png_base64}` : '';
+
+  function resetForNewUpload(message: string) {
+    setAnalysis({
+      ...initialAnalysis,
+      task: 'READY_FOR_UPLOAD',
+      claim: 'NEW IMAGES READY FOR ANALYSIS.',
+      where: 'NO EVIDENCE MAP UNTIL YOU RUN THIS UPLOAD.',
+      magnitude: 'NOT CALCULATED YET',
+      sensorCase: 'AWAITING UPLOAD',
+      limit: 'The previous map was cleared. Run the new upload to generate fresh evidence.',
+      confidence: 0,
+      decision: 'READY TO ANALYSE',
+      evidence: undefined,
+      ai_summary: message,
+      trace: [['01', 'NEW_UPLOAD', 'READY']],
+    });
+  }
 
   function chooseFiles(list: FileList | null) {
     if (!list) return;
@@ -78,12 +99,14 @@ export default function SatQueryConsole() {
     setError('');
     setFiles(picked);
     setFileModalities(picked.map(() => 'AUTO'));
+    resetForNewUpload('New images are ready. Click Run to replace the old map with evidence from these uploads.');
   }
 
   async function runAnalysis(event: FormEvent) {
     event.preventDefault();
     setError('');
     setRunning(true);
+    setAnalysis((current) => ({ ...current, evidence: undefined, ai_summary: 'Analysing the newly uploaded images. The map will update when evidence is ready.', trace: [['01', 'UPLOADED_PIXELS', 'ANALYSING']] }));
     try {
       const form = new FormData();
       form.set('caseId', caseId);
@@ -135,7 +158,7 @@ export default function SatQueryConsole() {
         <aside className="border-b-4 border-black p-4 lg:min-h-[720px] lg:border-b-0 lg:border-r-4">
           <p className="section-label">01 / OBSERVATIONS</p>
           {cases.map((item) => (
-            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setFiles([]); setFileModalities([]); }}>
+            <button key={item.id} className={`case-card ${caseId === item.id ? 'case-card-active' : ''}`} onClick={() => { setCaseId(item.id); setFiles([]); setFileModalities([]); resetForNewUpload('Choose images and run a new analysis for this case.'); }}>
               <span className="font-mono text-[10px]">{item.code}</span><strong>{item.title}</strong><span>{item.type}</span>
             </button>
           ))}
@@ -169,13 +192,29 @@ export default function SatQueryConsole() {
             </div>
           </div>
 
-          <div className={`evidence-map map-${mode} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={`${mode} evidence map showing probable change regions`}>
-            <div className="map-grid" /><div className="river river-one" /><div className="river river-two" />
-            <div className="change-region change-a">A</div><div className="change-region change-b">B</div>
+          <div className={`evidence-map map-${mode} ${mapPreview ? 'has-uploaded-map' : ''} ${analysis.confidence < 50 ? 'map-abstained' : ''}`} aria-label={mapPreview ? 'Map generated from the newly uploaded imagery and evidence mask' : `${mode} evidence map showing probable change regions`}>
+            {!mapPreview && <><div className="map-grid" /><div className="river river-one" /><div className="river river-two" />
+            <div className="change-region change-a">A</div><div className="change-region change-b">B</div></>}
+            {mapPreview && <img key={mapPreview.slice(-40)} className="evidence-base" src={mapPreview} alt="Map rendered from the uploaded observation" />}
+            {semanticOverlay && <img className="semantic-overlay" src={semanticOverlay} alt="Colour-coded evidence derived from the uploaded pixels" />}
             {evidenceMask && <img className="evidence-mask" src={evidenceMask} alt="Evidence mask generated from uploaded pixels" />}
             <div className="north">N ↑</div><div className="scale">0 ━━━━━ 2 KM</div>
-            <div className="map-caption">{evidenceMask ? 'REAL / MASK GENERATED FROM UPLOADED PIXELS' : analysis.confidence < 50 ? 'REGIONS WITHHELD / INSUFFICIENT EVIDENCE' : `${mode.toUpperCase()} / PROBABLE NEW INUNDATION`}</div>
+            <div className="map-caption">{mapPreview ? analysis.evidence?.map_label ?? 'UPDATED FROM UPLOADED PIXELS' : 'UPLOAD AN IMAGE TO GENERATE EVIDENCE'}</div>
+            {analysis.evidence?.legend?.length ? <div className="evidence-legend">{analysis.evidence.legend.map((item) => <span key={item}>{item}</span>)}</div> : null}
           </div>
+
+          {(beforePreview || afterPreview) && <div className="comparison-strip" aria-label="Uploaded images used for this comparison">
+            {beforePreview && <figure><img src={beforePreview} alt="First uploaded observation" /><figcaption>FIRST UPLOAD</figcaption></figure>}
+            {afterPreview && <figure><img src={afterPreview} alt="Latest uploaded observation" /><figcaption>LATEST UPLOAD</figcaption></figure>}
+          </div>}
+
+          {analysis.evidence?.layers?.length ? <section className="evidence-layers" aria-label="Visual evidence layers derived from the upload">
+            <div className="layer-heading"><strong>VISUAL EVIDENCE LAYERS</strong><span>FILTERS AVAILABLE FOR THIS UPLOAD</span></div>
+            <div className="layer-grid">{analysis.evidence.layers.map((layer) => <article className={`layer-card layer-${layer.status.toLowerCase().replaceAll('_', '-')}`} key={layer.id}>
+              {layer.png_base64 ? <img src={`data:image/png;base64,${layer.png_base64}`} alt={`${layer.title}: ${layer.meaning}`} /> : <div className="layer-unavailable">NOT AVAILABLE<br />FOR THIS INPUT</div>}
+              <div><strong>{layer.title}</strong><em>{layer.status.replaceAll('_', ' ')}</em><p>{layer.meaning}</p></div>
+            </article>)}</div>
+          </section> : null}
 
           <form className="border-t-4 border-black p-4" onSubmit={runAnalysis}>
             <label className="section-label" htmlFor="query">ASK THE OBSERVATION</label>
@@ -195,6 +234,7 @@ export default function SatQueryConsole() {
           <div className="flex items-center justify-between gap-4"><p className="section-label">03 / EVIDENCE CONTRACT</p><span className="task-stamp">{analysis.runtime?.toUpperCase() ?? 'DEMO'} / {analysis.task}</span></div>
           <div className="claim-box"><p>CLAIM</p><h2>{analysis.claim}</h2></div>
           <div className="ai-summary"><p>AI SUMMARY</p><span>{analysis.ai_summary ?? 'Run an upload to generate a grounded summary from the observation evidence.'}</span></div>
+          {analysis.evidence?.analysis_path && <div className="analysis-path"><p>HOW THIS WAS DERIVED</p><span>{analysis.evidence.analysis_path}</span></div>}
           <div className="contract-row"><span>WHERE</span><p>{analysis.where}</p></div>
           <div className="contract-row"><span>HOW MUCH</span><p>{analysis.magnitude}</p></div>
           <div className="contract-row"><span>SENSOR CASE</span><p className="whitespace-pre-line">{analysis.sensorCase}</p></div>

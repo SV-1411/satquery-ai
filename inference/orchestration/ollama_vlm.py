@@ -31,6 +31,7 @@ class OllamaVisionSummarizer:
 
     @staticmethod
     def _preview(raster: RasterData) -> str:
+        """Keep local-VLM image payloads small enough for reliable GPU responses."""
         channels = raster.data
         if raster.modality == "SAR":
             image = np.repeat(channels[0:1], 3, axis=0)
@@ -42,8 +43,10 @@ class OllamaVisionSummarizer:
             if image.shape[0] == 1:
                 image = np.repeat(image, 3, axis=0)
         rgb = np.moveaxis(np.clip(image, 0, 1), 0, -1)
+        image = Image.fromarray((rgb * 255).astype(np.uint8), mode="RGB")
+        image.thumbnail((512, 512), Image.Resampling.BILINEAR)
         buffer = BytesIO()
-        Image.fromarray((rgb * 255).astype(np.uint8), mode="RGB").save(buffer, format="PNG", optimize=True)
+        image.save(buffer, format="PNG", optimize=True)
         return base64.b64encode(buffer.getvalue()).decode("ascii")
 
     def summarize(self, rasters: list[RasterData], query: str, evidence: dict) -> tuple[str | None, str]:
@@ -51,7 +54,8 @@ class OllamaVisionSummarizer:
             return None, "grounded-template-fallback"
         prompt = (
             "You are the plain-language report writer for a remote-sensing analysis tool. "
-            "Explain the measured result for a non-specialist in 2 to 4 short sentences. "
+            "Explain the measured result for a non-specialist in 2 to 3 short, simple sentences. "
+            "First say what was uploaded, then the main measured finding, then the important caution or next step. "
             "Use ONLY the supplied evidence JSON and visible image previews. Do not invent a date, place, sensor, object, cause, or measurement. "
             "Do not replace or contradict the claim, confidence, percentage, bounds, or limitation. "
             "Explicitly say when a result is spectral/backscatter evidence rather than a guaranteed land-cover label. "
