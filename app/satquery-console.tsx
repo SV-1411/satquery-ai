@@ -106,21 +106,11 @@ export default function SatQueryConsole() {
     });
   }
 
-  async function chooseFiles(list: FileList | null) {
-    if (!list) return;
-    const picked = Array.from(list).slice(0, 4);
-    const invalid = picked.find((file) => !/\.(tif|tiff|png|jpe?g)$/i.test(file.name));
-    if (invalid) {
-      setError(`${invalid.name}: unsupported input. Use GeoTIFF, TIFF, PNG or JPEG.`);
-      return;
-    }
-    setError('');
-    setFiles(picked);
-    setFileModalities(picked.map(() => 'AUTO'));
-    resetForNewUpload('New images are ready. Click Run to replace the old map with evidence from these uploads.');
+  async function previewFiles(selectedFiles: File[]) {
+    if (!selectedFiles.length) return;
     const previewForm = new FormData();
-    picked.forEach((file) => previewForm.append('files', file));
-    picked.forEach((_, index) => previewForm.set(`modality${String.fromCharCode(65 + index)}`, 'AUTO'));
+    selectedFiles.forEach((file) => previewForm.append('files', file));
+    selectedFiles.forEach((_, index) => previewForm.set(`modality${String.fromCharCode(65 + index)}`, fileModalities[index] ?? 'AUTO'));
     try {
       const response = await fetch('/api/preview', { method: 'POST', body: previewForm });
       const payload = await response.json() as { previews?: string[] };
@@ -130,8 +120,40 @@ export default function SatQueryConsole() {
     }
   }
 
+  async function chooseFiles(list: FileList | null) {
+    if (!list) return;
+    const incoming = Array.from(list);
+    const combined = [...files, ...incoming.filter((candidate) => !files.some((current) => current.name === candidate.name && current.size === candidate.size && current.lastModified === candidate.lastModified))];
+    const tooMany = combined.length > 4;
+    const picked = combined.slice(0, 4);
+    const invalid = picked.find((file) => !/\.(tif|tiff|png|jpe?g)$/i.test(file.name));
+    if (invalid) {
+      setError(`${invalid.name}: unsupported input. Use GeoTIFF, TIFF, PNG or JPEG.`);
+      return;
+    }
+    setError(tooMany ? 'Only four observations are allowed. The first four remain selected; remove one before adding another.' : '');
+    setFiles(picked);
+    setFileModalities(picked.map(() => 'AUTO'));
+    resetForNewUpload(`${picked.length} observation${picked.length > 1 ? 's are' : ' is'} ready. Add, remove, or edit sensors before running.`);
+    await previewFiles(picked);
+    if (fileInput.current) fileInput.current.value = '';
+  }
+
+  async function removeFile(indexToRemove: number) {
+    const nextFiles = files.filter((_, index) => index !== indexToRemove);
+    const nextModalities = fileModalities.filter((_, index) => index !== indexToRemove);
+    setFiles(nextFiles);
+    setFileModalities(nextModalities);
+    resetForNewUpload(nextFiles.length ? `${nextFiles.length} observation${nextFiles.length > 1 ? 's are' : ' is'} ready. Run when the selected inputs are correct.` : 'No observations selected. Add an image to begin.');
+    if (nextFiles.length) await previewFiles(nextFiles);
+  }
+
   async function runAnalysis(event: FormEvent) {
     event.preventDefault();
+    if (!files.length) {
+      setError('Add at least one observation before running the analysis.');
+      return;
+    }
     setError('');
     setRunning(true);
     setSelectedLayerId('');
@@ -210,13 +232,13 @@ export default function SatQueryConsole() {
           ))}
 
           <button className="upload-box mt-5 w-full" onClick={() => fileInput.current?.click()} type="button">
-            <span>+</span><strong>{files.length ? `${files.length} OBSERVATION${files.length > 1 ? 'S' : ''} LOADED` : 'ADD OBSERVATION'}</strong>
-            <small>{files.length ? files.map((file) => file.name).join(' / ') : 'GEOTIFF / TIFF / PNG / JPEG'}</small>
+            <span>+</span><strong>{files.length ? 'ADD ANOTHER OBSERVATION' : 'ADD OBSERVATION'}</strong>
+            <small>{files.length ? `${files.length}/4 LOADED — SELECT MORE OR REMOVE BELOW` : 'GEOTIFF / TIFF / PNG / JPEG'}</small>
           </button>
           <input ref={fileInput} className="sr-only" type="file" multiple accept=".tif,.tiff,.png,.jpg,.jpeg" onChange={(event) => chooseFiles(event.target.files)} />
 
           {files.length > 0 && <div className="modality-list">
-            {files.map((file, index) => <label key={`${file.name}-${index}`} className="modality-row"><span>{file.name}</span><select value={fileModalities[index] ?? 'AUTO'} onChange={(event) => setFileModalities((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value as ModalityHint : value))}><option value="AUTO">AUTO DETECT</option><option value="OPTICAL">OPTICAL / MULTISPECTRAL</option><option value="SAR">SAR / RADAR</option></select></label>)}
+            {files.map((file, index) => <div key={`${file.name}-${index}`} className="modality-row"><span title={file.name}>INPUT {index + 1}: {file.name}</span><select aria-label={`Sensor type for ${file.name}`} value={fileModalities[index] ?? 'AUTO'} onChange={(event) => setFileModalities((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value as ModalityHint : value))}><option value="AUTO">AUTO DETECT</option><option value="OPTICAL">OPTICAL / MULTISPECTRAL</option><option value="SAR">SAR / RADAR</option></select><button type="button" className="remove-file" onClick={() => removeFile(index)} aria-label={`Remove ${file.name}`}>REMOVE</button></div>)}
           </div>}
 
           <dl className="metadata-grid mt-5">
