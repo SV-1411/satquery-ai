@@ -12,8 +12,10 @@ from .ollama_vlm import OllamaVisionSummarizer
 from ..preprocessing.raster_loader import RasterData, model_channels
 
 
-def _mask_png(mask: np.ndarray) -> str:
+def _mask_png(mask: np.ndarray, target_shape: tuple[int, int] | None = None) -> str:
     image = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
+    if target_shape and image.size != (target_shape[1], target_shape[0]):
+        image = image.resize((target_shape[1], target_shape[0]), Image.Resampling.NEAREST)
     buffer = BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -26,24 +28,40 @@ def _rgb_png(rgb: np.ndarray) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _raster_preview(raster: RasterData, size: int = 256) -> np.ndarray:
-    """Create a display-safe preview aligned to the evidence-mask grid."""
+def _display_source(raster: RasterData) -> np.ndarray:
+    """Select display bands without changing the uploaded image aspect ratio."""
     if raster.modality == "SAR":
-        source = np.repeat(raster.data[:1], 3, axis=0)
+        return np.repeat(raster.data[:1], 3, axis=0)
     elif raster.data.shape[0] >= 4:
         # BigEarthNet Sentinel-2 uses B01, B02, B03, B04 order at its front.
-        source = raster.data[[3, 2, 1]]
-    else:
-        source = raster.data[:3]
-        if source.shape[0] == 1:
-            source = np.repeat(source, 3, axis=0)
-        elif source.shape[0] == 2:
-            source = np.concatenate([source, source[:1]], axis=0)
-    return model_channels(source, size=size)[:3]
+        return raster.data[[3, 2, 1]]
+    source = raster.data[:3]
+    if source.shape[0] == 1:
+        return np.repeat(source, 3, axis=0)
+    if source.shape[0] == 2:
+        return np.concatenate([source, source[:1]], axis=0)
+    return source
+
+
+def _raster_preview(raster: RasterData, size: int = 256) -> np.ndarray:
+    """Create the fixed-size grid used by the pixel model."""
+    return model_channels(_display_source(raster), size=size)[:3]
+
+
+def _display_rgb(raster: RasterData, max_dimension: int = 1024) -> np.ndarray:
+    """Create a clear, aspect-preserving display image for the user interface."""
+    source = _display_source(raster)
+    height, width = source.shape[1:]
+    scale = min(1.0, max_dimension / max(height, width))
+    if scale >= 1.0:
+        return source
+    new_height, new_width = max(1, round(height * scale)), max(1, round(width * scale))
+    tensor = torch.from_numpy(source).unsqueeze(0)
+    return torch.nn.functional.interpolate(tensor, size=(new_height, new_width), mode="bilinear", align_corners=False).squeeze(0).numpy()
 
 
 def _preview_png(raster: RasterData) -> str:
-    return _rgb_png(_raster_preview(raster))
+    return _rgb_png(_display_rgb(raster))
 
 
 def _preview_grid(rasters: list[RasterData]) -> str:
@@ -59,13 +77,15 @@ def _preview_grid(rasters: list[RasterData]) -> str:
     return _rgb_png(grid)
 
 
-def _semantic_overlay(masks: list[tuple[np.ndarray, tuple[int, int, int]]]) -> str:
+def _semantic_overlay(masks: list[tuple[np.ndarray, tuple[int, int, int]]], target_shape: tuple[int, int] | None = None) -> str:
     """Paint explainable evidence classes over the same 256px map grid."""
     if not masks:
         return ""
-    height, width = masks[0][0].shape
+    height, width = target_shape or masks[0][0].shape
     canvas = np.zeros((3, height, width), dtype=np.float32)
     for mask, color in masks:
+        if mask.shape != (height, width):
+            mask = np.asarray(Image.fromarray(mask.astype(np.uint8) * 255, mode="L").resize((width, height), Image.Resampling.NEAREST)) > 0
         for channel, value in enumerate(color):
             canvas[channel][mask] = value / 255.0
     return _rgb_png(canvas)
@@ -80,7 +100,7 @@ def _score_layer(score: np.ndarray, color: tuple[int, int, int]) -> str:
 
 def _single_semantic_evidence(raster: RasterData) -> tuple[str, list[str], list[dict[str, str]]]:
     """Return visual layers that are valid for the uploaded sensor capabilities."""
-    channels = _raster_preview(raster)
+    channels = _display_rgb(raster, max_dimension=1024)
     brightness = channels.mean(axis=0)
     layers: list[dict[str, str]] = [{
         "id": "natural-colour", "title": "UPLOADED IMAGE", "status": "AVAILABLE",
@@ -147,7 +167,11 @@ class Executor:
             "diagnostics": result.get("diagnostics", {}),
         })
         if generated:
-            result["ai_summary"] = generated
+            # Keep the on-screen conclusion numerically and semantically tied to
+            # measured fields. Qwen is retained as an auditable local-language
+            # draft, but cannot replace the validated summary with a hallucinated
+            # interpretation of the rendered image.
+            result.setdefault("diagnostics", {})["qwen_summary_draft"] = generated
         result.setdefault("diagnostics", {})["summary_model"] = summary_model
         return result
 
@@ -191,7 +215,8 @@ class Executor:
             claim = f"THE UPLOADED OBSERVATION IS CONSISTENT WITH {scene.upper()}."
             where = f"WATER-CONSISTENT REGION / PIXEL BOUNDS {bbox}" if bbox else "NO STABLE REGION RELEASED"
         confidence = int(np.clip(45 + scene_probability * 35 + model_confidence * 20, 0, 92)) if self.registry.ready else 48
-        ai_summary = f"AI SUMMARY: This {raster.modality.lower()} observation is most consistent with {scene}. The evidence mask highlights {water_percent:.1f}% water-consistent pixels in the uploaded raster. This is an observation of spectral/backscatter signal, not a guaranteed land-cover label."
+        ai_summary = f"AI SUMMARY: The scene classifier signal is most consistent with {scene}. Separately, the water-consistent spectral/backscatter mask covers {water_percent:.1f}% of the uploaded pixels. These are signal indicators, not verified land-cover boundaries or a field survey."
+        display_shape = _display_rgb(raster).shape[1:]
         semantic_png, legend, layers = _single_semantic_evidence(raster)
         return self._with_vlm_summary([raster], query, {
             "claim": claim,
@@ -202,7 +227,7 @@ class Executor:
             "confidence": confidence,
             "decision": "TRIAGE-READY / HUMAN CONFIRMATION ADVISED" if confidence >= 60 else "LOW CONFIDENCE / HUMAN REVIEW REQUIRED",
             "ai_summary": ai_summary,
-            "evidence": {"source": "uploaded_pixels", "bbox_pixels": bbox, "mask_png_base64": _mask_png(mask), "visual_png_base64": _preview_png(raster), "semantic_png_base64": semantic_png, "legend": legend, "analysis_path": f"{task} -> SATQUERY PIXEL MODEL + SPECTRAL SIGNAL -> LOCALIZED EVIDENCE", "layers": layers, "map_label": "UPLOADED IMAGE + QUERY EVIDENCE"},
+            "evidence": {"source": "uploaded_pixels", "bbox_pixels": bbox, "mask_png_base64": _mask_png(mask, display_shape), "visual_png_base64": _preview_png(raster), "semantic_png_base64": semantic_png, "legend": legend, "analysis_path": f"{task} -> SATQUERY PIXEL MODEL + SPECTRAL SIGNAL -> LOCALIZED EVIDENCE", "layers": layers, "map_label": "UPLOADED IMAGE + QUERY EVIDENCE"},
             "diagnostics": {"model_confidence": round(model_confidence, 4), "water_percent": round(water_percent, 3)},
         })
 
@@ -215,6 +240,7 @@ class Executor:
         changed_percent = float(mask.mean() * 100)
         confidence = int(np.clip(52 + min(changed_percent, 30), 0, 85))
         ai_summary = f"AI SUMMARY: Comparing the first and last observations on the common grid, {changed_percent:.1f}% of pixels changed beyond the {threshold:.3f} baseline. This detects visual/spectral difference; it does not by itself prove flooding, construction, or another cause."
+        display_shape = _display_rgb(after).shape[1:]
         return self._with_vlm_summary([before, after], query, {
             "claim": "PIXEL-LEVEL CHANGE WAS DETECTED BETWEEN THE TWO UPLOADED OBSERVATIONS.",
             "where": f"CHANGE BOUNDS {(_bbox(mask) or 'NOT STABLE')} IN THE COMMON PIXEL GRID",
@@ -224,7 +250,7 @@ class Executor:
             "confidence": confidence,
             "decision": "TRIAGE-READY / HUMAN CONFIRMATION ADVISED" if confidence >= 60 else "LOW CONFIDENCE / HUMAN REVIEW REQUIRED",
             "ai_summary": ai_summary,
-            "evidence": {"source": "uploaded_pixels", "changed_area_percent": changed_percent, "bbox_pixels": _bbox(mask), "mask_png_base64": _mask_png(mask), "visual_png_base64": _preview_png(after), "before_png_base64": _preview_png(before), "after_png_base64": _preview_png(after), "semantic_png_base64": _semantic_overlay([(mask, (255, 50, 35))]), "legend": ["RED = PIXELS THAT CHANGED BETWEEN UPLOADS"], "analysis_path": "BI-TEMPORAL CHANGE -> COMMON-GRID PIXEL DIFFERENCE -> CHANGE EVIDENCE", "layers": [{"id": "before", "title": "BEFORE IMAGE", "status": "AVAILABLE", "meaning": "First uploaded observation.", "png_base64": _preview_png(before)}, {"id": "after", "title": "LATEST IMAGE", "status": "AVAILABLE", "meaning": "Latest uploaded observation used as the map base.", "png_base64": _preview_png(after)}, {"id": "change", "title": "CHANGE EVIDENCE", "status": "AVAILABLE", "meaning": "Red pixels exceeded the measured difference threshold.", "png_base64": _semantic_overlay([(mask, (255, 50, 35))])}], "map_label": "LATEST IMAGE + RED CHANGE EVIDENCE"},
+            "evidence": {"source": "uploaded_pixels", "changed_area_percent": changed_percent, "bbox_pixels": _bbox(mask), "mask_png_base64": _mask_png(mask, display_shape), "visual_png_base64": _preview_png(after), "before_png_base64": _preview_png(before), "after_png_base64": _preview_png(after), "semantic_png_base64": _semantic_overlay([(mask, (255, 50, 35))], display_shape), "legend": ["RED = PIXELS THAT CHANGED BETWEEN UPLOADS"], "analysis_path": "BI-TEMPORAL CHANGE -> COMMON-GRID PIXEL DIFFERENCE -> CHANGE EVIDENCE", "layers": [{"id": "before", "title": "BEFORE IMAGE", "status": "AVAILABLE", "meaning": "First uploaded observation.", "png_base64": _preview_png(before)}, {"id": "after", "title": "LATEST IMAGE", "status": "AVAILABLE", "meaning": "Latest uploaded observation used as the map base.", "png_base64": _preview_png(after)}, {"id": "change", "title": "CHANGE EVIDENCE", "status": "AVAILABLE", "meaning": "Red pixels exceeded the measured difference threshold.", "png_base64": _semantic_overlay([(mask, (255, 50, 35))], display_shape)}], "map_label": "LATEST IMAGE + RED CHANGE EVIDENCE"},
             "diagnostics": {"threshold": round(threshold, 5), "changed_pixels": int(mask.sum())},
         })
 
@@ -237,6 +263,7 @@ class Executor:
         agreement = float((optical_mask == sar_mask).mean())
         confidence = int(np.clip(40 + agreement * 45, 0, 85))
         ai_summary = f"AI SUMMARY: Optical and SAR were analyzed separately and compared on the shared grid. Their simple evidence masks agree on {agreement * 100:.1f}% of pixels. Higher agreement supports a stronger joint signal; disagreement should trigger review rather than be hidden."
+        display_shape = _display_rgb(optical).shape[1:]
         return self._with_vlm_summary([optical, sar], query, {
             "claim": "OPTICAL AND SAR SIGNALS WERE COMPARED AS COMPLEMENTARY EVIDENCE.",
             "where": f"COMMON EVIDENCE BOUNDS {(_bbox(optical_mask | sar_mask) or 'NOT STABLE')}",
@@ -246,7 +273,7 @@ class Executor:
             "confidence": confidence,
             "decision": "TRIAGE-READY / HUMAN CONFIRMATION ADVISED" if confidence >= 60 else "SENSOR DISAGREEMENT / HUMAN REVIEW REQUIRED",
             "ai_summary": ai_summary,
-            "evidence": {"source": "uploaded_pixels", "agreement": agreement, "bbox_pixels": _bbox(optical_mask | sar_mask), "mask_png_base64": _mask_png(optical_mask | sar_mask), "visual_png_base64": _preview_png(optical), "after_png_base64": _preview_png(sar), "semantic_png_base64": _semantic_overlay([(optical_mask & sar_mask, (0, 220, 255)), (optical_mask & ~sar_mask, (255, 210, 0)), (sar_mask & ~optical_mask, (255, 0, 200))]), "legend": ["CYAN = BOTH SENSORS", "YELLOW = OPTICAL ONLY", "MAGENTA = SAR ONLY"], "analysis_path": "OPTICAL + SAR FUSION -> SENSOR-SPECIFIC SIGNALS -> AGREEMENT EVIDENCE", "layers": [{"id": "optical", "title": "OPTICAL IMAGE", "status": "AVAILABLE", "meaning": "Uploaded optical observation.", "png_base64": _preview_png(optical)}, {"id": "sar", "title": "SAR BACKSCATTER", "status": "AVAILABLE", "meaning": "Uploaded radar observation, display-normalized.", "png_base64": _preview_png(sar)}, {"id": "agreement", "title": "SENSOR AGREEMENT", "status": "AVAILABLE", "meaning": "Cyan means both sensors; yellow or magenta means one sensor only.", "png_base64": _semantic_overlay([(optical_mask & sar_mask, (0, 220, 255)), (optical_mask & ~sar_mask, (255, 210, 0)), (sar_mask & ~optical_mask, (255, 0, 200))])}], "map_label": "OPTICAL IMAGE + FUSED SENSOR EVIDENCE"},
+            "evidence": {"source": "uploaded_pixels", "agreement": agreement, "bbox_pixels": _bbox(optical_mask | sar_mask), "mask_png_base64": _mask_png(optical_mask | sar_mask, display_shape), "visual_png_base64": _preview_png(optical), "after_png_base64": _preview_png(sar), "semantic_png_base64": _semantic_overlay([(optical_mask & sar_mask, (0, 220, 255)), (optical_mask & ~sar_mask, (255, 210, 0)), (sar_mask & ~optical_mask, (255, 0, 200))], display_shape), "legend": ["CYAN = BOTH SENSORS", "YELLOW = OPTICAL ONLY", "MAGENTA = SAR ONLY"], "analysis_path": "OPTICAL + SAR FUSION -> SENSOR-SPECIFIC SIGNALS -> AGREEMENT EVIDENCE", "layers": [{"id": "optical", "title": "OPTICAL IMAGE", "status": "AVAILABLE", "meaning": "Uploaded optical observation.", "png_base64": _preview_png(optical)}, {"id": "sar", "title": "SAR BACKSCATTER", "status": "AVAILABLE", "meaning": "Uploaded radar observation, display-normalized.", "png_base64": _preview_png(sar)}, {"id": "agreement", "title": "SENSOR AGREEMENT", "status": "AVAILABLE", "meaning": "Cyan means both sensors; yellow or magenta means one sensor only.", "png_base64": _semantic_overlay([(optical_mask & sar_mask, (0, 220, 255)), (optical_mask & ~sar_mask, (255, 210, 0)), (sar_mask & ~optical_mask, (255, 0, 200))], display_shape)}], "map_label": "OPTICAL IMAGE + FUSED SENSOR EVIDENCE"},
             "diagnostics": {"agreement": round(agreement, 4)},
         })
 

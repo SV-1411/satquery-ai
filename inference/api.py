@@ -54,6 +54,8 @@ async def analyse(query: str = Form(...), files: list[UploadFile] = File(...), m
     # route rather than silently dropping intermediate or mixed-sensor files.
     if task == "BI_TEMPORAL_CHANGE_VQA" and len(rasters) > 2:
         task = "MULTI_OBSERVATION_SYNTHESIS"
+    if task != "MULTI_OBSERVATION_SYNTHESIS" and "AMBIGUOUS" in modalities:
+        raise HTTPException(status_code=422, detail="Sensor type could not be determined from this upload. Choose OPTICAL or SAR for each ambiguous file before requesting water, vegetation, change, or fusion evidence.")
     if task == "OPTICAL_SAR_FUSION" and not {"OPTICAL", "SAR"}.issubset(modalities):
         raise HTTPException(status_code=422, detail="Optical/SAR fusion requires at least one OPTICAL and one SAR upload. Use the modality selectors or rename the files.")
     if task == "BI_TEMPORAL_CHANGE_VQA" and len(rasters) >= 2:
