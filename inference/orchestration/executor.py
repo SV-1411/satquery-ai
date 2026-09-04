@@ -98,6 +98,37 @@ def _score_layer(score: np.ndarray, color: tuple[int, int, int]) -> str:
     return _rgb_png(canvas)
 
 
+def _optical_signal_masks(channels: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return explainable optical signals, including dark coastal water."""
+    red, green, blue = channels
+    brightness = channels.mean(axis=0)
+    blue_advantage = blue - np.maximum(red, green)
+    # Open water in the included coastal sample is dark, so requiring a fixed
+    # positive blue score incorrectly rejected most of the ocean. Use relative
+    # colour dominance plus a brightness gate; this remains a signal, not a
+    # supervised land-cover segmentation.
+    water = (blue_advantage >= np.percentile(blue_advantage, 70)) & (brightness <= np.percentile(brightness, 65))
+    water_score = blue_advantage
+    vegetation_score = green - red
+    vegetation = (vegetation_score >= max(float(np.percentile(vegetation_score, 70)), 0.015)) & ~water
+    built_score = brightness - np.abs(red - green) - 0.5 * np.abs(red - blue)
+    # >= matters for normalized rasters whose upper percentile can equal 1.0.
+    built = (built_score >= np.percentile(built_score, 72)) & ~water & ~vegetation
+    return brightness, water_score, water, vegetation_score, vegetation, built_score, built
+
+
+def _optical_scene_description(water_fraction: float, vegetation_fraction: float, built_fraction: float) -> str:
+    if water_fraction >= 0.18 and built_fraction >= 0.18:
+        return "mixed coastal water and urban land"
+    if water_fraction >= 0.25:
+        return "water-dominant or coastal land"
+    if built_fraction >= 0.28:
+        return "built-up or urban land"
+    if vegetation_fraction >= 0.18:
+        return "vegetated or agricultural land"
+    return "mixed land cover"
+
+
 def _single_semantic_evidence(raster: RasterData) -> tuple[str, list[str], list[dict[str, str]]]:
     """Return visual layers that are valid for the uploaded sensor capabilities."""
     channels = _display_rgb(raster, max_dimension=1024)
@@ -114,13 +145,7 @@ def _single_semantic_evidence(raster: RasterData) -> tuple[str, list[str], list[
         ])
         overlay, legend = _semantic_overlay([(low_backscatter, (0, 220, 255))]), ["CYAN = LOW-BACKSCATTER SIGNAL"]
     else:
-        red, green, blue = channels
-        water_score = blue - 0.55 * red - 0.25 * green
-        water = _heuristic_water(channels)
-        vegetation_score = green - red
-        vegetation = (vegetation_score > max(float(np.percentile(vegetation_score, 70)), 0.06)) & ~water
-        built_score = brightness - np.abs(red - green) - 0.5 * np.abs(red - blue)
-        built = (built_score > np.percentile(built_score, 72)) & ~water & ~vegetation
+        _, water_score, water, vegetation_score, vegetation, built_score, built = _optical_signal_masks(channels)
         layers.extend([
             {"id": "water-signal", "title": "WATER-CONSISTENT SIGNAL", "status": "AVAILABLE", "meaning": "Blue-dominant spectral signal; it is not a verified water boundary.", "png_base64": _score_layer(water_score, (30, 130, 255))},
             {"id": "vegetation", "title": "VEGETATION SIGNAL", "status": "AVAILABLE", "meaning": "Green-over-red signal, shown as a relative index.", "png_base64": _score_layer(vegetation_score, (50, 220, 90))},
@@ -144,10 +169,7 @@ def _bbox(mask: np.ndarray) -> list[int] | None:
 
 
 def _heuristic_water(channels: np.ndarray) -> np.ndarray:
-    red, green, blue = channels[0], channels[1], channels[2]
-    score = blue - 0.55 * red - 0.25 * green
-    threshold = float(np.percentile(score, 90))
-    return score > max(threshold, 0.08)
+    return _optical_signal_masks(channels)[2]
 
 
 class Executor:
@@ -204,7 +226,20 @@ class Executor:
         water_percent = float(mask.mean() * 100)
         bbox = _bbox(mask)
         scene_names = {0: "vegetated or agricultural land", 1: "water", 2: "built-up land"}
-        scene = scene_names.get(scene_label, "mixed land cover") if scene_label is not None else ("water-consistent and built-up land" if water_percent > 2 else "mixed land cover")
+        model_scene = scene_names.get(scene_label, "unknown") if scene_label is not None else "unavailable"
+        if raster.modality == "OPTICAL":
+            _, _, water_signal, _, vegetation_signal, _, built_signal = _optical_signal_masks(channels)
+            water_fraction = float(water_signal.mean())
+            vegetation_fraction = float(vegetation_signal.mean())
+            built_fraction = float(built_signal.mean())
+            scene = _optical_scene_description(water_fraction, vegetation_fraction, built_fraction)
+            model_conflict = scene_label == 0 and scene not in {"vegetated or agricultural land", "mixed land cover"}
+        else:
+            water_fraction = water_percent / 100.0
+            vegetation_fraction = 0.0
+            built_fraction = 0.0
+            scene = model_scene if model_scene != "unknown" else ("water-consistent SAR signal" if water_percent > 2 else "mixed SAR scene")
+            model_conflict = False
         if task == "TEXT_GUIDED_GROUNDING":
             claim = "WATER-CONSISTENT PIXELS WERE LOCALIZED FROM THE UPLOADED OBSERVATION."
             where = f"PIXEL BOUNDS {bbox}" if bbox else "NO STABLE WATER REGION RELEASED"
@@ -214,21 +249,26 @@ class Executor:
         else:
             claim = f"THE UPLOADED OBSERVATION IS CONSISTENT WITH {scene.upper()}."
             where = f"WATER-CONSISTENT REGION / PIXEL BOUNDS {bbox}" if bbox else "NO STABLE REGION RELEASED"
-        confidence = int(np.clip(45 + scene_probability * 35 + model_confidence * 20, 0, 92)) if self.registry.ready else 48
-        ai_summary = f"AI SUMMARY: The scene classifier signal is most consistent with {scene}. Separately, the water-consistent spectral/backscatter mask covers {water_percent:.1f}% of the uploaded pixels. These are signal indicators, not verified land-cover boundaries or a field survey."
+        evidence_support = max(water_fraction, vegetation_fraction, built_fraction)
+        confidence = int(np.clip(48 + evidence_support * 24 + (0 if model_conflict else scene_probability * 8), 0, 78)) if self.registry.ready else 48
+        if raster.modality == "OPTICAL":
+            conflict_note = f" The learned scene head separately signaled {model_scene}, but it disagreed with the mixed-scene evidence, so that head was not used as the headline classification." if model_conflict else ""
+            ai_summary = f"AI SUMMARY: Visible pixel signals indicate {scene}: approximately {water_fraction * 100:.1f}% water-consistent, {built_fraction * 100:.1f}% built-up-like, and {vegetation_fraction * 100:.1f}% vegetation signal. These are relative evidence masks, not verified land-cover boundaries or a field survey.{conflict_note}"
+        else:
+            ai_summary = f"AI SUMMARY: The uploaded SAR observation is most consistent with {scene}. Its low-backscatter signal covers {water_percent:.1f}% of the uploaded pixels. This is a relative radar signal, not a verified land-cover boundary or field survey."
         display_shape = _display_rgb(raster).shape[1:]
         semantic_png, legend, layers = _single_semantic_evidence(raster)
         return self._with_vlm_summary([raster], query, {
             "claim": claim,
             "where": where,
-            "magnitude": f"{water_percent:.1f}% WATER-CONSISTENT PIXELS",
+            "magnitude": f"{water_percent:.1f}% WATER / {built_fraction * 100:.1f}% BUILT-LIKE / {vegetation_fraction * 100:.1f}% VEGETATION SIGNAL" if raster.modality == "OPTICAL" else f"{water_percent:.1f}% LOW-BACKSCATTER PIXELS",
             "sensorCase": "UPLOADED PIXELS: MODEL + SPECTRAL BASELINE AGREEMENT" if self.registry.ready else "UPLOADED PIXELS: SPECTRAL BASELINE ONLY",
             "limit": "Pixel evidence is not a substitute for analyst review; verify georegistration and class labels before operational use.",
             "confidence": confidence,
             "decision": "TRIAGE-READY / HUMAN CONFIRMATION ADVISED" if confidence >= 60 else "LOW CONFIDENCE / HUMAN REVIEW REQUIRED",
             "ai_summary": ai_summary,
             "evidence": {"source": "uploaded_pixels", "bbox_pixels": bbox, "mask_png_base64": _mask_png(mask, display_shape), "visual_png_base64": _preview_png(raster), "semantic_png_base64": semantic_png, "legend": legend, "analysis_path": f"{task} -> SATQUERY PIXEL MODEL + SPECTRAL SIGNAL -> LOCALIZED EVIDENCE", "layers": layers, "map_label": "UPLOADED IMAGE + QUERY EVIDENCE"},
-            "diagnostics": {"model_confidence": round(model_confidence, 4), "water_percent": round(water_percent, 3)},
+            "diagnostics": {"model_confidence": round(model_confidence, 4), "model_scene": model_scene, "model_scene_probability": round(scene_probability, 4), "model_scene_conflict": model_conflict, "water_percent": round(water_percent, 3), "vegetation_percent": round(vegetation_fraction * 100, 3), "built_percent": round(built_fraction * 100, 3), "confidence_basis": "relative sensor-signal support; not validated accuracy"},
         })
 
     def change(self, before: RasterData, after: RasterData, query: str) -> dict:

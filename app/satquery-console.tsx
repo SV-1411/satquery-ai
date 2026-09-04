@@ -178,8 +178,8 @@ export default function SatQueryConsole() {
       `INPUT COUNT: ${analysis.inputSummary?.length ?? files.length}`,
       `QUERY: ${query}`, '', `CLAIM: ${analysis.claim}`, `WHERE: ${analysis.where}`,
       `MAGNITUDE: ${analysis.magnitude}`, `SENSOR CASE: ${analysis.sensorCase}`,
-      `CONFIDENCE: ${analysis.confidence}/100`, `DECISION: ${analysis.decision}`,
-      `LIMIT: ${analysis.limit}`, `AI SUMMARY: ${analysis.ai_summary ?? 'Not available in demo mode.'}`, '', 'EXECUTION TRACE',
+      `EVIDENCE SCORE (NOT VALIDATED ACCURACY): ${analysis.confidence}/100`, `DECISION: ${analysis.decision}`,
+      `LIMIT: ${analysis.limit}`, `AI SUMMARY: ${(analysis.ai_summary ?? 'Not available in demo mode.').replace(/^AI SUMMARY:\s*/i, '')}`, '', 'EXECUTION TRACE',
       ...analysis.trace.map((row) => row.join(' / ')), '', `GENERATED: ${new Date().toISOString()}`,
     ].join('\n');
     const link = document.createElement('a');
@@ -295,8 +295,8 @@ export default function SatQueryConsole() {
           <div className="contract-row"><span>SENSOR CASE</span><p className="whitespace-pre-line">{analysis.sensorCase}</p></div>
           <div className="contract-row"><span>LIMIT / NEXT OBSERVATION</span><p>{analysis.limit}</p></div>
           <div className="confidence-block">
-            <div><span>CONFIDENCE</span><strong>{analysis.confidence}</strong></div>
-            <div className="confidence-meter"><i style={{ width: `${analysis.confidence}%` }} /></div><p>{analysis.decision}</p>
+            <div><span>EVIDENCE SCORE</span><strong>{analysis.confidence}</strong></div>
+            <div className="confidence-meter"><i style={{ width: `${analysis.confidence}%` }} /></div><p>INTERNAL SIGNAL AGREEMENT — NOT VALIDATED ACCURACY</p><p>{analysis.decision}</p>
           </div>
           <details className="trace-box" open><summary>OBSERVABLE EXECUTION TRACE</summary>
             {analysis.trace.map(([step, tool, status]) => <div className="trace-row" key={`${step}-${tool}`}><span>{step}</span><strong>{tool}</strong><em>{status}</em></div>)}

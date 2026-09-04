@@ -19,6 +19,16 @@ The current UI correctly keeps the **SURFACE TEMPERATURE** and **AIR / ATMOSPHER
 
 ## Quick tests
 
+### Judge-ready mixed coastal scene
+
+Use `sentinel2_sample.png`, select `OPTICAL`, and ask:
+
+```text
+What does this image show? Highlight water, vegetation, and built-up evidence, and explain any disagreement in simple words.
+```
+
+This sample is intentionally a mixed coastal/urban scene. A healthy result should describe it as mixed coastal water and urban land and show separate water, built-up-like, and vegetation layers. The report should expose any disagreement from the learned scene head and show an **evidence score**, not imply that the score is validated classification accuracy.
+
 ### Single-image VQA
 
 Upload one of these files:
