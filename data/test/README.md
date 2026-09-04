@@ -4,6 +4,19 @@ This is the separate `test` image pack for exercising the upload interface end t
 
 For a single optical image, the UI also shows the original image plus water-consistent, vegetation, built-up-like, and surface-brightness visual layers. Surface temperature and air/atmosphere are deliberately marked **not available** unless a source provides the necessary thermal or atmospheric measurements; they are never fabricated from ordinary RGB/SAR imagery.
 
+## Calibrated thermal and atmosphere reference data
+
+`calibrated_reference` contains real satellite science products for future calibrated-product integration tests. They are deliberately named by product and measurement so they cannot be mistaken for RGB image tests:
+
+* `LANDSAT_C2_L2SP_SURFACE_TEMPERATURE_ST_B10.tif`
+  - Official Landsat 9 Collection 2 Level-2 Surface Temperature band over the Phoenix, Arizona region (2025-12-20). This is a one-band `uint16` product in **scaled Kelvin**, not a visible image. Convert valid digital numbers using `Kelvin = DN * 0.00341802 + 149.0`; Celsius is Kelvin minus 273.15.
+* `SENTINEL5P_TROPOMI_TROPOSPHERIC_NO2.tif`
+  - Openly licensed Digital Earth Africa Sentinel-5P/TROPOMI tropospheric nitrogen-dioxide retrieval tile (2018-04-30). This is an atmospheric-column retrieval, **not** a ground-level AQI or a direct concentration a person breathes.
+* `SENTINEL5P_TROPOMI_TROPOSPHERIC_NO2.metadata.json`
+  - Acquisition date, projection, provenance, and licence for the NO2 tile.
+
+The current UI correctly keeps the **SURFACE TEMPERATURE** and **AIR / ATMOSPHERE** layers unavailable when these files are uploaded: calibrated numerical processing and metadata validation have not yet been implemented. Do not use them as a normal UI pass/fail test. They are the correct, labelled input files for that next capability; the present RGB/SAR tests above remain the end-to-end runnable suite.
+
 ## Quick tests
 
 ### Single-image VQA
@@ -70,11 +83,15 @@ Summarize the differences between these uploaded observations in simple words. D
 * Sentinel-2 sample: https://github.com/mommermi/geotiff_sample (Copernicus Sentinel data; see its license terms).
 * Rasterio geospatial samples: https://github.com/rasterio/rasterio/tree/main/tests/data.
 * Change-detection sample: https://huggingface.co/datasets/Mercyiris/remote-sensing-change-detection (CC BY 4.0; cite Tingxuan Yan if used in research).
+* Surface-temperature reference: [USGS Landsat Collection 2 Surface Temperature](https://www.usgs.gov/landsat-missions/landsat-collection-2-surface-temperature) (Landsat Level-2 science product; use the stated scale and offset).
+* Atmospheric reference: [Digital Earth Africa Sentinel-5P TROPOMI Level-2 NO2](https://registry.opendata.aws/deafrica-sentinel5p/) (CC BY 4.0).
 
 ## Important limitations
 
 * A real change pair must show the same geographic footprint at different times.
 * A real optical-SAR pair must be co-registered and cover the same area.
 * A JPEG/PNG may not contain CRS or band metadata.
+* Surface temperature requires a calibrated thermal product plus its scale/offset and valid-pixel rules; it cannot be derived from an RGB display.
+* TROPOMI NO2 is a satellite column retrieval at kilometre-scale resolution; it is not a local ground-station AQI reading.
 * A change result is an image-difference signal, not proof of the cause of that difference.
 * The baseline must be verified against aligned, dated source data before operational use.
