@@ -174,7 +174,8 @@ export default function SatQueryConsole() {
 
   function downloadReport() {
     const report = [
-      'SATQUERY AI / EVIDENCE REPORT', `CASE: ${activeCase.title}`, `TASK: ${analysis.task}`,
+      'SATQUERY AI / EVIDENCE REPORT', `SELECTED UI MODE: ${activeCase.title}`, `EXECUTED ANALYSIS: ${analysis.task}`,
+      `INPUT COUNT: ${analysis.inputSummary?.length ?? files.length}`,
       `QUERY: ${query}`, '', `CLAIM: ${analysis.claim}`, `WHERE: ${analysis.where}`,
       `MAGNITUDE: ${analysis.magnitude}`, `SENSOR CASE: ${analysis.sensorCase}`,
       `CONFIDENCE: ${analysis.confidence}/100`, `DECISION: ${analysis.decision}`,
